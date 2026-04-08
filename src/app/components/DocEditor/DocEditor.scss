@@ -1,0 +1,35 @@
+.doc-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+
+  &--loading {
+    padding: 16px;
+    color: #888;
+    font-style: italic;
+  }
+
+  &__textarea {
+    flex: 1;
+    width: 100%;
+    padding: 16px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    background: #1a1a1a;
+    color: #e8e8e8;
+    border: none;
+    outline: none;
+    resize: none;
+    box-sizing: border-box;
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    &::placeholder {
+      color: #555;
+    }
+  }
+}
