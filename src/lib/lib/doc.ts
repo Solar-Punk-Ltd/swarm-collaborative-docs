@@ -1,10 +1,9 @@
 import { Bee, FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
 import { MessageData, MessageType, Options, readSingleComment, writeCommentToIndex } from '@solarpunkltd/comment-system'
-import { v4 as uuidv4 } from 'uuid'
 import * as Y from 'yjs'
 
 import { DocSettings, NotificationProvider } from '../interfaces'
-import { indexStrToBigint, remove0x, retryAwaitableAsync } from '../utils/common'
+import { decode, encode, indexStrToBigint, remove0x, retryAwaitableAsync, uuidV4 } from '../utils/common'
 import { ErrorHandler } from '../utils/error'
 import { EventEmitter } from '../utils/eventEmitter'
 
@@ -13,15 +12,7 @@ import { SwarmManifest } from './manifest'
 
 const DEBOUNCE_MS = 500
 const TAG = '[SwarmDoc]'
-
-// base64 encode/decode — ~33% overhead vs raw binary, vs 100% for hex
-function encode(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString('base64')
-}
-
-function decode(b64: string): Uint8Array {
-  return new Uint8Array(Buffer.from(b64, 'base64'))
-}
+const DEFAULT_MANIFEST_POLL_INTERVAL = 5000
 
 export class SwarmDoc {
   public readonly doc: Y.Doc
@@ -132,7 +123,7 @@ export class SwarmDoc {
 
     this.init()
     this.startFetchProcess()
-    // this.startManifestPoll();
+    this.startManifestPoll()
   }
 
   public stop(): void {
@@ -185,7 +176,7 @@ export class SwarmDoc {
       )
 
       const messageObj: MessageData = {
-        id: uuidv4(),
+        id: uuidV4(),
         username: this.ownAddress,
         address: this.ownAddress,
         topic: this.topic,
@@ -400,7 +391,6 @@ export class SwarmDoc {
   }
 
   private startManifestPoll(): void {
-    const INTERVAL_MS = 5000
     this.manifestPollTimer = setInterval(async () => {
       try {
         const members = await this.manifest.read()
@@ -419,7 +409,7 @@ export class SwarmDoc {
       } catch {
         // silent — manifest unavailable is not fatal
       }
-    }, INTERVAL_MS)
+    }, DEFAULT_MANIFEST_POLL_INTERVAL)
   }
 
   private startFetchProcess(): void {

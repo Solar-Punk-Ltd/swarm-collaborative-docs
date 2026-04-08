@@ -16,8 +16,6 @@ export const DOC_EVENTS = {
   MANIFEST_UPDATED: 'manifestUpdated', // payload: string[] of member addresses
 }
 
-export const DEFAULT_POLL_INTERVAL = 2000
-export const MINIMUM_POLL_INTERVAL = 500
 // placeholder stamp if smart gateway is used
 export const PLACEHOLDER_STAMP = '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 export const FEED_INDEX_ZERO = FeedIndex.fromBigInt(0n)

@@ -1,8 +1,7 @@
 import { FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
 import { MessageData, MessageType, Options, readSingleComment, writeCommentToIndex } from '@solarpunkltd/comment-system'
-import { v4 as uuidv4 } from 'uuid'
 
-import { indexStrToBigint, remove0x, retryAwaitableAsync } from '../utils/common'
+import { indexStrToBigint, remove0x, retryAwaitableAsync, uuidV4 } from '../utils/common'
 import { ErrorHandler } from '../utils/error'
 
 import { PLACEHOLDER_STAMP } from './constants'
@@ -104,7 +103,7 @@ export class SwarmManifest {
     console.log(`${TAG} addMember: writing index ${nextIndex}, total members: ${nextMembers.length}`)
 
     const messageObj: MessageData = {
-      id: uuidv4(),
+      id: uuidV4(),
       username: normalized,
       address: normalized,
       topic: identifier,

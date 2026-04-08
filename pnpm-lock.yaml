@@ -14,18 +14,12 @@ importers:
       '@solarpunkltd/comment-system':
         specifier: ^1.9.2
         version: 1.9.2
-      ethers:
-        specifier: ^6.16.0
-        version: 6.16.0
       react:
         specifier: ^19.2.4
         version: 19.2.4
       react-dom:
         specifier: ^19.2.4
         version: 19.2.4(react@19.2.4)
-      uuid:
-        specifier: ^13.0.0
-        version: 13.0.0
       yjs:
         specifier: ^13.6.30
         version: 13.6.30
@@ -2835,10 +2829,6 @@ packages:
 
   uuid@11.1.0:
     resolution: {integrity: sha512-0/A9rDy9P7cJ+8w1c9WD9V//9Wj15Ce2MPz8Ri6032usz+NfePxx5AcN3bN+r6ZL6jEo066/yNYB3tn4pQEx+A==}
-    hasBin: true
-
-  uuid@13.0.0:
-    resolution: {integrity: sha512-XQegIaBTVUjSHliKqcnFqYypAd4S+WCYt5NIeRs6w/UAry7z8Y9j5ZwRRL4kzq9U3sD6v+85er9FvkEaBpji2w==}
     hasBin: true
 
   vite-plugin-dts@4.5.4:
@@ -6125,8 +6115,6 @@ snapshots:
       which-typed-array: 1.1.20
 
   uuid@11.1.0: {}
-
-  uuid@13.0.0: {}
 
   vite-plugin-dts@4.5.4(@types/node@25.5.2)(typescript@6.0.2)(vite@8.0.6(@types/node@25.5.2)(jiti@2.6.1)(sass@1.99.0)):
     dependencies:

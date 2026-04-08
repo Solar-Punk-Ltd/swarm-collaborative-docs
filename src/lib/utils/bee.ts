@@ -1,4 +1,4 @@
-import { FeedIndex } from '@ethersphere/bee-js'
+import { Bytes, FeedIndex, PrivateKey } from '@ethersphere/bee-js'
 import { Options, readCommentsInRange } from '@solarpunkltd/comment-system'
 
 import { EVENTS } from '../lib/constants'
@@ -34,4 +34,12 @@ export async function fetchMessagesInRange(
     const comment = comments[ix]
     emitter.emit(EVENTS.MESSAGE_RECEIVED, comment)
   }
+}
+
+export function getSigner(input: string): PrivateKey {
+  const normalized = input.trim().toLowerCase()
+  const inputBytes = Bytes.fromUtf8(normalized)
+  const privateKeyHex = Bytes.keccak256(inputBytes).toHex()
+
+  return new PrivateKey(privateKeyHex)
 }

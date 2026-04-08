@@ -9,4 +9,5 @@ export type { NotificationPayload, NotificationHandler, NotificationProvider } f
 export { BroadcastChannelNotificationProvider } from './lib/notifications/broadcastChannel'
 export { SwarmFeedNotificationProvider } from './lib/notifications/swarmFeed'
 
-export { indexStrToBigint } from './utils/common'
+export { getSigner } from './utils/bee'
+export { indexStrToBigint, uuidV4 } from './utils/common'

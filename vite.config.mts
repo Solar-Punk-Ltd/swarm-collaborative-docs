@@ -22,7 +22,6 @@ export default defineConfig(({ mode }) => {
       entry: libEntry,
       name: APP_NAME[0].toLocaleLowerCase() + APP_NAME.slice(1),
       formats: ['es', 'cjs'],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       fileName: format => `${APP_NAME}.${format === 'es' ? 'js' : 'cjs.js'}`,
     }
 

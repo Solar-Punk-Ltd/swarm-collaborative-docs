@@ -53,3 +53,23 @@ export const indexStrToBigint = (indexStr?: string): bigint | undefined => {
 
   return BigInt(parseInt(indexStr, 10))
 }
+
+const ENCODING = 'base64'
+
+export const encode = (bytes: Uint8Array): string => {
+  return Buffer.from(bytes).toString(ENCODING)
+}
+
+export const decode = (b64: string): Uint8Array => {
+  return new Uint8Array(Buffer.from(b64, ENCODING))
+}
+
+export function uuidV4(): string {
+  const pattern = '10000000-1000-4000-8000-100000000000'
+
+  return pattern.replace(/[018]/g, (s: string) => {
+    const c = parseInt(s, 10)
+
+    return (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)
+  })
+}

@@ -1,6 +1,11 @@
 import { PrivateKey } from '@ethersphere/bee-js'
-import { keccak256 } from 'ethers'
-import { BroadcastChannelNotificationProvider, NotificationProvider, SwarmFeedNotificationProvider } from 'lib'
+import {
+  BroadcastChannelNotificationProvider,
+  getSigner,
+  NotificationProvider,
+  SwarmFeedNotificationProvider,
+  uuidV4,
+} from 'lib'
 import React, { useMemo, useState } from 'react'
 
 import { DocEditor } from './components/DocEditor/DocEditor'
@@ -47,13 +52,12 @@ interface TestSession {
 }
 
 function createSession(username: string, transport: Transport): TestSession {
-  const seed = crypto.randomUUID()
-  const hash = keccak256(Buffer.from(seed, 'utf-8')).slice(2)
-  const signer = new PrivateKey(hash)
+  const id = uuidV4()
+  const signer = getSigner(id)
 
   return {
     username,
-    privKey: hash,
+    privKey: signer.toHex(),
     pubKey: signer.publicKey().address().toString(),
     transport,
   }
