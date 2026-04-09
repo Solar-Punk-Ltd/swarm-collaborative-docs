@@ -11,8 +11,8 @@ export interface DocSettings {
     mutableStamp?: string // postage batch with immutableFlag=false, used for snapshot writes
     topic: string
     members?: string[]
-    notificationProvider: NotificationProvider
   }
+  notificationProvider: NotificationProvider
 }
 
 export interface UserSettings {
@@ -20,10 +20,4 @@ export interface UserSettings {
   ownAddress: string
   nickname: string
   ownIndex: bigint
-}
-
-export interface PreloadOptions {
-  firstIndex?: bigint
-  latestIndex?: bigint
-  reactionIndex?: bigint
 }

@@ -1,13 +1,14 @@
-export { SwarmDoc } from './lib/doc'
-export { SwarmManifest } from './lib/manifest'
+export { SwarmDoc } from './doc/doc'
+export { Members } from './doc/members'
 
-export { EVENTS, DOC_EVENTS } from './lib/constants'
+export { JOIN_FEED_INDEX, DOC_EVENTS } from './doc/events'
 
-export type { DocSettings, PreloadOptions } from './interfaces'
+export type { DocSettings } from './interfaces'
 export type { NotificationPayload, NotificationHandler, NotificationProvider } from './interfaces'
 
-export { BroadcastChannelNotificationProvider } from './lib/notifications/broadcastChannel'
-export { SwarmFeedNotificationProvider } from './lib/notifications/swarmFeed'
+export { BroadcastChannelNotificationProvider } from './notification/broadcastChannel'
+export { SwarmFeedNotificationProvider } from './notification/swarmFeed'
 
 export { getSigner } from './utils/bee'
 export { indexStrToBigint, uuidV4 } from './utils/common'
+export { PLACEHOLDER_STAMP } from './utils/constants'

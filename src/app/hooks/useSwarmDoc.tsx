@@ -2,11 +2,13 @@ import { DOC_EVENTS, DocSettings, SwarmDoc } from 'lib'
 import { useEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
 
-export const useSwarmDoc = ({ user, infra }: DocSettings) => {
+export const useSwarmDoc = ({ user, infra, notificationProvider }: DocSettings) => {
   const docRef = useRef<SwarmDoc | null>(null)
   const [doc, setDoc] = useState<Y.Doc | null>(null)
-  const [error, setError] = useState<any | null>(null)
-  const [members, setMembers] = useState<string[]>([])
+  const [{ error, members }, setStatus] = useState<{ error: Error | null; members: string[] }>({
+    error: null,
+    members: [],
+  })
 
   useEffect(() => {
     if (docRef.current) {
@@ -14,11 +16,11 @@ export const useSwarmDoc = ({ user, infra }: DocSettings) => {
       docRef.current = null
     }
 
-    const swarmDoc = new SwarmDoc({ user, infra })
+    const swarmDoc = new SwarmDoc({ user, infra, notificationProvider })
     docRef.current = swarmDoc
 
-    swarmDoc.getEmitter().on(DOC_EVENTS.DOC_ERROR, (err: any) => setError(err))
-    swarmDoc.getEmitter().on(DOC_EVENTS.MANIFEST_UPDATED, (m: string[]) => setMembers(m))
+    swarmDoc.getEmitter().on(DOC_EVENTS.DOC_ERROR, (err: Error) => setStatus(s => ({ ...s, error: err })))
+    swarmDoc.getEmitter().on(DOC_EVENTS.MEMBERS_UPDATED, (m: string[]) => setStatus(s => ({ ...s, members: m })))
 
     swarmDoc.start()
     setDoc(swarmDoc.doc)
@@ -27,13 +29,13 @@ export const useSwarmDoc = ({ user, infra }: DocSettings) => {
       swarmDoc.stop()
       docRef.current = null
       setDoc(null)
-      setMembers([])
+      setStatus({ error: null, members: [] })
     }
-  }, [user, infra])
+  }, [user, infra, notificationProvider])
 
-  const refreshManifest = () => {
-    docRef.current?.refreshManifest()
+  const refreshMemberList = () => {
+    docRef.current?.refreshMemberList()
   }
 
-  return { doc, error, members, refreshManifest }
+  return { doc, error, members, refreshMemberList }
 }

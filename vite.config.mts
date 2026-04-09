@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const libEntry = resolve(__dirname, 'src/lib/index.ts')
 const APP_NAME = 'SwarmCollaborativeDocs'
-const DEFAULT_VITE_DEV_PORT = 3002
+const DEFAULT_VITE_DEV_PORT = 5002
 
 export default defineConfig(({ mode }) => {
   const isProd = mode === 'production'

@@ -1,24 +1,9 @@
 import { Bee, FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
 
-import { NotificationHandler, NotificationPayload, NotificationProvider } from '../../interfaces/notification'
-import { remove0x } from '../../utils/common'
-
-// Bee node returns 404 when a feed index SOC doesn't exist yet (normal "no new notification" case).
-// It returns 500 when the SOC resolves but the referenced data chunk hasn't propagated to the
-// local node yet. Both are "not available right now" — silently retry on next poll.
-function isChunkUnavailableError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-
-  return (
-    error.stack?.includes('404') ||
-    error.message?.includes('Not Found') ||
-    error.message?.includes('404') ||
-    error.stack?.includes('500') ||
-    error.message?.includes('500') ||
-    error.message?.includes('Internal Server Error') ||
-    false
-  )
-}
+import { NotificationHandler, NotificationPayload, NotificationProvider } from '../interfaces/notification'
+import { isNotFoundError } from '../utils/bee'
+import { remove0x } from '../utils/common'
+import { NOTIFY_FEED_SUFFIX } from '../utils/constants'
 
 function isAbortError(error: unknown): boolean {
   if (!(error instanceof Error)) return false
@@ -27,11 +12,14 @@ function isAbortError(error: unknown): boolean {
 }
 
 const POLL_INTERVAL_MS = 1500
+const SLOW_POLL_INTERVAL_MS = 5000
+// Consecutive empty poll cycles before slowing down
+const SLOW_POLL_THRESHOLD = 5
 // Max notifications to drain per member per poll cycle (handles burst edits)
 const MAX_DRAIN = 10
-// How long the Bee node searches the network for a chunk before returning 500.
+// How long the Bee node searches the network for a chunk before returning 500
 const CHUNK_RETRIEVAL_TIMEOUT_MS = '1000ms'
-const TAG = '[SwarmFeedNotificationProvider]'
+const TAG = 'SwarmFeedNotificationProvider'
 
 export class SwarmFeedNotificationProvider implements NotificationProvider {
   private bee: Bee
@@ -42,21 +30,20 @@ export class SwarmFeedNotificationProvider implements NotificationProvider {
 
   private handler: NotificationHandler | null = null
   private pollTimer: ReturnType<typeof setInterval> | null = null
+  private currentPollIntervalMs = POLL_INTERVAL_MS
   private polling = false
   private abortController: AbortController | null = null
+  private emptyPollCount = 0
 
-  // address → next expected notification-feed index.
-  // null = not yet anchored (first poll reads the pointer to find the current tip).
+  // address → next expected notification-feed index (null = not yet anchored)
   private members: Map<string, FeedIndex | null> = new Map()
 
-  // Tracks the next index to use when writing our own notification feed.
+  // Tracks the next index to write on own notification feed.
   // null = not yet probed (resolved on first publish).
-  // Explicit tracking is required so we can write the pointer with the same index
-  // immediately after writing the notification, without a separate network probe.
   private nextNotifyIndex: FeedIndex | null = null
 
-  // Serialises publish calls so explicit index tracking stays consistent when
-  // publish() is called again before the previous write resolves.
+  // Serialises publish calls so the explicit index counter stays consistent
+  // even when publish() is called rapidly (e.g. quick successive edits).
   private publishQueue: Promise<void> = Promise.resolve()
 
   constructor(beeApiUrl: string, privateKey: string, mutableStamp: string, topic: string) {
@@ -69,18 +56,18 @@ export class SwarmFeedNotificationProvider implements NotificationProvider {
 
   // Per-user notification feed topic: topic + "_notify" + address
   private notifyTopic(address: string): Topic {
-    return Topic.fromString(this.topic + '_notify' + address)
+    return Topic.fromString(this.topic + NOTIFY_FEED_SUFFIX + address)
   }
 
   subscribe(_topic: string, handler: NotificationHandler): void {
     this.unsubscribe()
     this.handler = handler
-    this.abortController = new AbortController()
+    this.currentPollIntervalMs = POLL_INTERVAL_MS
+    this.emptyPollCount = 0
     this.pollTimer = setInterval(() => this.poll(), POLL_INTERVAL_MS)
   }
 
-  // Fire-and-forget. Serialised via publishQueue so the explicit index counter
-  // stays consistent even if called rapidly (e.g., quick successive edits).
+  // Fire-and-forget. Serialised via publishQueue so index tracking stays consistent.
   publish(payload: NotificationPayload): void {
     this.publishQueue = this.publishQueue.then(() =>
       this.doPublish(payload).catch(err => {
@@ -108,77 +95,96 @@ export class SwarmFeedNotificationProvider implements NotificationProvider {
     const data = JSON.stringify({ ...payload, _publishedAt: publishedAt })
 
     console.debug(
-      `${TAG} publish → notifyIndex=${writeIndex.toBigInt()} docFeedIndex=${payload.feedIndex} author=${payload.author.slice(0, 8)}… deltaBytes=${payload.delta ? Math.round(payload.delta.length * 0.75) : 0} t=${new Date(publishedAt).toISOString()}`,
+      `${TAG} publish → notifyIndex=${writeIndex.toBigInt()} docFeedIndex=${payload.feedIndex} author=${payload.author.slice(0, 8)}… deltaBytes=${payload.delta ? Math.round(payload.delta.length * 0.75) : 0}`,
     )
 
     const notifyWriter = this.bee.makeFeedWriter(this.notifyTopic(this.ownAddress), this.signer)
-    await notifyWriter.uploadPayload(this.mutableStamp, data, {
-      index: writeIndex,
-      deferred: false,
-    })
+    await notifyWriter.uploadPayload(this.mutableStamp, data, { index: writeIndex, deferred: false })
 
-    // Advance local counter before writing the pointer so rapid re-entries
-    // (shouldn't happen due to publishQueue, but just in case) are safe.
+    // Advance local counter before the next enqueued publish can run
     this.nextNotifyIndex = writeIndex.next()
-
-    console.debug(`${TAG} publish ✓ notifyIndex=${writeIndex.toBigInt()} writeLatency=${Date.now() - publishedAt}ms`)
   }
 
   addMember(address: string): void {
-    if (address === this.ownAddress) return
+    if (address === this.ownAddress || this.members.has(address)) return
+    this.members.set(address, null)
+    console.log(`${TAG} addMember: ${address.slice(0, 8)}…`)
+  }
 
-    if (!this.members.has(address)) {
-      this.members.set(address, null)
-      console.log(`${TAG} addMember: ${address.slice(0, 8)}…`)
-    }
+  private adjustPollInterval(newIntervalMs: number): void {
+    if (this.currentPollIntervalMs === newIntervalMs || !this.pollTimer) return
+    this.currentPollIntervalMs = newIntervalMs
+    clearInterval(this.pollTimer)
+    this.pollTimer = setInterval(() => this.poll(), newIntervalMs)
   }
 
   private async poll(): Promise<void> {
     if (!this.handler || this.polling) return
     this.polling = true
+
+    // Fresh AbortController per cycle; abort the previous one in case it leaked
+    const cycleController = new AbortController()
+    const prev = this.abortController
+    this.abortController = cycleController
+    prev?.abort()
+
     try {
-      await Promise.allSettled([...this.members.keys()].map(address => this.pollMember(address)))
+      const results = await Promise.allSettled(
+        [...this.members.keys()].map(address => this.pollMember(address, cycleController.signal)),
+      )
+
+      const totalDrained = results.reduce((sum, r) => sum + (r.status === 'fulfilled' ? r.value : 0), 0)
+
+      if (totalDrained === 0) {
+        this.emptyPollCount++
+
+        if (this.emptyPollCount >= SLOW_POLL_THRESHOLD) {
+          this.adjustPollInterval(SLOW_POLL_INTERVAL_MS)
+        }
+      } else {
+        this.emptyPollCount = 0
+        this.adjustPollInterval(POLL_INTERVAL_MS)
+      }
     } finally {
       this.polling = false
     }
   }
 
-  private async pollMember(address: string): Promise<void> {
-    const signal = this.abortController?.signal
+  private async pollMember(address: string, signal: AbortController['signal']): Promise<number> {
     const nextExpected = this.members.get(address) ?? FeedIndex.fromBigInt(0n)
 
     const notifyReader = this.bee.makeFeedReader(this.notifyTopic(address), address, {
-      headers: {
-        'swarm-chunk-retrieval-timeout': CHUNK_RETRIEVAL_TIMEOUT_MS,
-      },
+      headers: { 'swarm-chunk-retrieval-timeout': CHUNK_RETRIEVAL_TIMEOUT_MS },
       signal,
     })
 
     let nextIndex = nextExpected
     let drained = 0
+
     while (drained < MAX_DRAIN) {
-      if (!this.handler || signal?.aborted) break
+      if (!this.handler || signal.aborted) break
 
       let result
       try {
         result = await notifyReader.downloadPayload({ index: nextIndex })
       } catch (err) {
-        if (!isChunkUnavailableError(err) && !isAbortError(err)) {
+        if (!isNotFoundError(err) && !isAbortError(err)) {
           console.error(`${TAG} drain failed for ${address.slice(0, 8)}…:`, err)
         }
-        break // 404 = no new data yet
+
+        break
       }
 
       nextIndex = result.feedIndex.next()
       this.members.set(address, nextIndex)
 
-      const raw = JSON.parse(result.payload.toUtf8()) as NotificationPayload & {
-        _publishedAt?: number
-      }
+      const raw = JSON.parse(result.payload.toUtf8()) as NotificationPayload & { _publishedAt?: number }
       const { _publishedAt: _, ...payload } = raw
       this.handler(payload)
       drained++
     }
+
+    return drained
   }
 
   unsubscribe(): void {
@@ -186,6 +192,7 @@ export class SwarmFeedNotificationProvider implements NotificationProvider {
       clearInterval(this.pollTimer)
       this.pollTimer = null
     }
+
     this.abortController?.abort()
     this.abortController = null
     this.handler = null

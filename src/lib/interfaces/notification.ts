@@ -1,9 +1,9 @@
 export interface NotificationPayload {
+  v: number // protocol version
   topic: string
   author: string
   feedIndex: number
-  deltaRef: string
-  delta?: string // base64-encoded Yjs delta for real-time sync; absent on init/fallback reads
+  delta?: string // base64-encoded Yjs delta for real-time sync; absent on join/fallback reads
 }
 
 export type NotificationHandler = (payload: NotificationPayload) => void

@@ -1,4 +1,4 @@
-import { NotificationHandler, NotificationPayload, NotificationProvider } from '../../interfaces/notification'
+import { NotificationHandler, NotificationPayload, NotificationProvider } from '../interfaces/notification'
 
 export class BroadcastChannelNotificationProvider implements NotificationProvider {
   private channel: BroadcastChannel | null = null

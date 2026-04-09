@@ -1,29 +1,29 @@
 import { PrivateKey } from '@ethersphere/bee-js'
 import {
   BroadcastChannelNotificationProvider,
-  getSigner,
   NotificationProvider,
+  PLACEHOLDER_STAMP,
   SwarmFeedNotificationProvider,
-  uuidV4,
 } from 'lib'
 import React, { useMemo, useState } from 'react'
 
 import { DocEditor } from './components/DocEditor/DocEditor'
+import { Session, Transport, useSession } from './hooks/useSession'
 import { useSwarmDoc } from './hooks/useSwarmDoc'
 
-enum Transport {
-  SWARM = 'swarm',
-  BROADCAST = 'broadcast',
-}
-
 const DEFAULT_BEE_URL = process.env.BEE_API_URL || 'http://localhost:1633'
-const BEE_URL_KEY = 'bee_url'
-
 const DEFAULT_STAMP = process.env.STAMP ?? ''
 const DEFAULT_MUTABLE_STAMP = process.env.MUTABLE_STAMP ?? ''
 
+const BEE_URL_KEY = 'bee_url'
 const STAMP_KEY = 'stamp'
 const MUTABLE_STAMP_KEY = 'mutable_stamp'
+
+const TEST_ROOM_ID = 'test-room'
+
+function getTopic(id: string): string {
+  return id + (process.env.ENV ?? 'dev')
+}
 
 function loadBeeUrl(): string {
   return sessionStorage.getItem(BEE_URL_KEY) ?? DEFAULT_BEE_URL
@@ -37,44 +37,133 @@ function loadMutableStamp(): string {
   return sessionStorage.getItem(MUTABLE_STAMP_KEY) ?? DEFAULT_MUTABLE_STAMP
 }
 
-function getTopic(id: string): string {
-  return id + (process.env.ENV ?? 'dev')
+function makeNotificationProvider(
+  transport: Transport,
+  beeUrl: string,
+  privKey: string,
+  mutableStamp: string,
+  topic: string,
+): NotificationProvider {
+  if (transport === Transport.BROADCAST) return new BroadcastChannelNotificationProvider()
+
+  return new SwarmFeedNotificationProvider(beeUrl, privKey, mutableStamp, topic)
 }
 
-const TEST_SESSION_ID = 'test-room'
-const SESSION_KEY = 'test_session'
+// ── LoginView ─────────────────────────────────────────────────────────────────
 
-interface TestSession {
-  username: string
-  privKey: string
-  pubKey: string
-  transport: Transport
+interface LoginViewProps {
+  beeUrl: string
+  stamp: string
+  mutableStamp: string
+  onBeeUrlChange: (url: string) => void
+  onStampChange: (v: string) => void
+  onMutableStampChange: (v: string) => void
+  onLogin: (username: string, transport: Transport) => void
 }
 
-function createSession(username: string, transport: Transport): TestSession {
-  const id = uuidV4()
-  const signer = getSigner(id)
+const LoginView: React.FC<LoginViewProps> = ({
+  beeUrl,
+  stamp,
+  mutableStamp,
+  onBeeUrlChange,
+  onStampChange,
+  onMutableStampChange,
+  onLogin,
+}) => {
+  const [inputName, setInputName] = useState('')
+  const [transport, setTransport] = useState<Transport>(Transport.SWARM)
 
-  return {
-    username,
-    privKey: signer.toHex(),
-    pubKey: signer.publicKey().address().toString(),
-    transport,
+  const submit = () => {
+    const name = inputName.trim()
+
+    if (name) onLogin(name, transport)
   }
+
+  return (
+    <div style={{ padding: 32, display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 400 }}>
+      <h2 style={{ margin: 0 }}>Swarm Collab Doc</h2>
+      <input
+        value={inputName}
+        onChange={e => setInputName(e.target.value)}
+        onKeyDown={e => e.key === 'Enter' && submit()}
+        placeholder="Enter username"
+        style={{ padding: 8, fontSize: 16 }}
+        autoFocus
+      />
+      <div style={{ display: 'flex', gap: 0, borderRadius: 4, overflow: 'hidden', border: '1px solid #555' }}>
+        {([Transport.SWARM, Transport.BROADCAST] as const).map(t => (
+          <button
+            key={t}
+            onClick={() => setTransport(t)}
+            style={{
+              flex: 1,
+              padding: '6px 0',
+              fontSize: 13,
+              border: 'none',
+              cursor: 'pointer',
+              background: transport === t ? '#4f8ef7' : '#2a2a2a',
+              color: transport === t ? '#fff' : '#aaa',
+            }}
+          >
+            {t === Transport.SWARM ? 'Swarm Feed' : 'BroadcastChannel'}
+          </button>
+        ))}
+      </div>
+      {(
+        [
+          {
+            key: BEE_URL_KEY,
+            label: 'Bee API URL',
+            value: beeUrl,
+            onChange: onBeeUrlChange,
+            placeholder: DEFAULT_BEE_URL,
+            mono: false,
+          },
+          {
+            key: STAMP_KEY,
+            label: 'STAMP',
+            value: stamp,
+            onChange: onStampChange,
+            placeholder: DEFAULT_STAMP || 'batch stamp hex',
+            mono: true,
+          },
+          {
+            key: MUTABLE_STAMP_KEY,
+            label: 'MUTABLE_STAMP',
+            value: mutableStamp,
+            onChange: onMutableStampChange,
+            placeholder: DEFAULT_MUTABLE_STAMP || 'mutable stamp hex',
+            mono: true,
+          },
+        ] as const
+      ).map(({ key, label, value, onChange, placeholder, mono }) => (
+        <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={{ fontSize: 12, opacity: 0.6 }}>{label}</label>
+          <input
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            onBlur={() => sessionStorage.setItem(key, value)}
+            placeholder={placeholder}
+            style={{ padding: 6, fontSize: 13, ...(mono ? { fontFamily: 'monospace' } : {}) }}
+          />
+          {mono && (!value || value === PLACEHOLDER_STAMP) && (
+            <span style={{ fontSize: 11, color: '#fbbf24' }}>
+              ⚠ No stamp set — uploads will rely on a smart gateway
+            </span>
+          )}
+        </div>
+      ))}
+      <button onClick={submit} disabled={!inputName.trim()} style={{ padding: 8 }}>
+        Join
+      </button>
+    </div>
+  )
 }
 
-function loadSession(): TestSession | null {
-  try {
-    const raw = sessionStorage.getItem(SESSION_KEY)
+// ── SessionView ───────────────────────────────────────────────────────────────
 
-    return raw ? JSON.parse(raw) : null
-  } catch {
-    return null
-  }
-}
-
-const SessionView: React.FC<{
-  session: TestSession
+interface SessionViewProps {
+  session: Session
   beeUrl: string
   stamp: string
   mutableStamp: string
@@ -82,9 +171,20 @@ const SessionView: React.FC<{
   onStampChange: (v: string) => void
   onMutableStampChange: (v: string) => void
   onLogout: () => void
-}> = ({ session, beeUrl, stamp, mutableStamp, onBeeUrlChange, onStampChange, onMutableStampChange, onLogout }) => {
+}
+
+const SessionView: React.FC<SessionViewProps> = ({
+  session,
+  beeUrl,
+  stamp,
+  mutableStamp,
+  onBeeUrlChange,
+  onStampChange,
+  onMutableStampChange,
+  onLogout,
+}) => {
   const signer = useMemo(() => new PrivateKey(session.privKey), [session.privKey])
-  const topic = getTopic(TEST_SESSION_ID)
+  const topic = getTopic(TEST_ROOM_ID)
   const [configOpen, setConfigOpen] = useState(false)
   const [urlDraft, setUrlDraft] = useState(beeUrl)
   const [stampDraft, setStampDraft] = useState(stamp)
@@ -104,29 +204,21 @@ const SessionView: React.FC<{
     setConfigOpen(false)
   }
 
-  const notificationProvider = useMemo((): NotificationProvider => {
-    if (session.transport === Transport.BROADCAST) {
-      return new BroadcastChannelNotificationProvider()
-    }
-
-    return new SwarmFeedNotificationProvider(beeUrl, signer.toHex(), mutableStamp, topic)
-  }, [session.transport, beeUrl, signer, topic, mutableStamp])
+  const notificationProvider = useMemo(
+    () => makeNotificationProvider(session.transport, beeUrl, signer.toHex(), mutableStamp, topic),
+    [session.transport, beeUrl, signer, mutableStamp, topic],
+  )
 
   const docConfig = useMemo(
     () => ({
       user: { nickname: session.username, privateKey: signer.toHex() },
-      infra: {
-        beeUrl,
-        stamp,
-        mutableStamp,
-        topic,
-        notificationProvider,
-      },
+      infra: { beeUrl, stamp, mutableStamp, topic },
+      notificationProvider,
     }),
     [session.username, signer, topic, beeUrl, stamp, mutableStamp, notificationProvider],
   )
 
-  const { doc, error, members, refreshManifest } = useSwarmDoc(docConfig)
+  const { doc, error, members, refreshMemberList } = useSwarmDoc(docConfig)
 
   const transportLabel = session.transport === Transport.BROADCAST ? 'BroadcastChannel' : 'Swarm Feed'
 
@@ -134,15 +226,7 @@ const SessionView: React.FC<{
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
       <div style={{ background: '#222', color: '#fff', fontSize: 13 }}>
-        <div
-          style={{
-            padding: '8px 16px',
-            display: 'flex',
-            gap: 12,
-            alignItems: 'center',
-            flexWrap: 'wrap',
-          }}
-        >
+        <div style={{ padding: '8px 16px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <strong>{session.username}</strong>
           <code style={{ fontSize: 11, opacity: 0.6 }}>{session.pubKey}</code>
           <button
@@ -152,37 +236,14 @@ const SessionView: React.FC<{
           >
             Copy address
           </button>
-          <span
-            style={{
-              fontSize: 11,
-              opacity: 0.5,
-              padding: '1px 6px',
-              border: '1px solid #555',
-              borderRadius: 3,
-            }}
-          >
+          <span style={{ fontSize: 11, opacity: 0.5, padding: '1px 6px', border: '1px solid #555', borderRadius: 3 }}>
             {transportLabel}
           </span>
 
           {members.length > 0 && (
-            <div
-              style={{
-                display: 'flex',
-                gap: 6,
-                alignItems: 'center',
-                marginLeft: 'auto',
-              }}
-            >
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginLeft: 'auto' }}>
               {members.map(m => (
-                <span
-                  key={m}
-                  style={{
-                    background: '#333',
-                    borderRadius: 3,
-                    padding: '1px 6px',
-                    fontSize: 11,
-                  }}
-                >
+                <span key={m} style={{ background: '#333', borderRadius: 3, padding: '1px 6px', fontSize: 11 }}>
                   <code style={{ opacity: 0.8 }}>{m.slice(0, 8)}…</code>
                 </span>
               ))}
@@ -190,9 +251,9 @@ const SessionView: React.FC<{
           )}
 
           <button
-            onClick={refreshManifest}
+            onClick={refreshMemberList}
             style={{ fontSize: 11, padding: '2px 6px', opacity: 0.7 }}
-            title="Re-read member manifest"
+            title="Re-read member list"
           >
             Refresh Members
           </button>
@@ -218,7 +279,7 @@ const SessionView: React.FC<{
           </button>
         </div>
 
-        {/* Config row */}
+        {/* Config panel */}
         {configOpen && (
           <div
             style={{
@@ -229,110 +290,62 @@ const SessionView: React.FC<{
               gap: 6,
             }}
           >
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <label
-                style={{
-                  fontSize: 11,
-                  opacity: 0.7,
-                  whiteSpace: 'nowrap',
-                  width: 160,
-                }}
-              >
-                Bee API URL
-              </label>
-              <input
-                value={urlDraft}
-                onChange={e => setUrlDraft(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && applyConfig()}
-                style={{
-                  flex: 1,
-                  padding: '3px 6px',
-                  fontSize: 12,
-                  background: '#111',
-                  color: '#fff',
-                  border: '1px solid #555',
-                  borderRadius: 3,
-                }}
-                autoFocus
-              />
-              <button
-                onClick={() => setUrlDraft(DEFAULT_BEE_URL)}
-                style={{ fontSize: 11, padding: '3px 8px', opacity: 0.6 }}
-                title="Reset to default"
-              >
-                Reset
-              </button>
-            </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <label
-                style={{
-                  fontSize: 11,
-                  opacity: 0.7,
-                  whiteSpace: 'nowrap',
-                  width: 160,
-                }}
-              >
-                STAMP
-              </label>
-              <input
-                value={stampDraft}
-                onChange={e => setStampDraft(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && applyConfig()}
-                placeholder={DEFAULT_STAMP || 'batch stamp hex'}
-                style={{
-                  flex: 1,
-                  padding: '3px 6px',
-                  fontSize: 12,
-                  background: '#111',
-                  color: '#fff',
-                  border: '1px solid #555',
-                  borderRadius: 3,
-                  fontFamily: 'monospace',
-                }}
-              />
-              <button
-                onClick={() => setStampDraft(DEFAULT_STAMP)}
-                style={{ fontSize: 11, padding: '3px 8px', opacity: 0.6 }}
-                title="Reset to .env value"
-              >
-                Reset
-              </button>
-            </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <label
-                style={{
-                  fontSize: 11,
-                  opacity: 0.7,
-                  whiteSpace: 'nowrap',
-                  width: 160,
-                }}
-              >
-                MUTABLE_STAMP
-              </label>
-              <input
-                value={mutableStampDraft}
-                onChange={e => setMutableStampDraft(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && applyConfig()}
-                placeholder={DEFAULT_MUTABLE_STAMP || 'mutable stamp hex'}
-                style={{
-                  flex: 1,
-                  padding: '3px 6px',
-                  fontSize: 12,
-                  background: '#111',
-                  color: '#fff',
-                  border: '1px solid #555',
-                  borderRadius: 3,
-                  fontFamily: 'monospace',
-                }}
-              />
-              <button
-                onClick={() => setMutableStampDraft(DEFAULT_MUTABLE_STAMP)}
-                style={{ fontSize: 11, padding: '3px 8px', opacity: 0.6 }}
-                title="Reset to .env value"
-              >
-                Reset
-              </button>
-            </div>
+            {(
+              [
+                {
+                  label: 'Bee API URL',
+                  value: urlDraft,
+                  onChange: setUrlDraft,
+                  placeholder: DEFAULT_BEE_URL,
+                  mono: false,
+                  onReset: () => setUrlDraft(DEFAULT_BEE_URL),
+                },
+                {
+                  label: 'STAMP',
+                  value: stampDraft,
+                  onChange: setStampDraft,
+                  placeholder: DEFAULT_STAMP || 'batch stamp hex',
+                  mono: true,
+                  onReset: () => setStampDraft(DEFAULT_STAMP),
+                },
+                {
+                  label: 'MUTABLE_STAMP',
+                  value: mutableStampDraft,
+                  onChange: setMutableStampDraft,
+                  placeholder: DEFAULT_MUTABLE_STAMP || 'mutable stamp hex',
+                  mono: true,
+                  onReset: () => setMutableStampDraft(DEFAULT_MUTABLE_STAMP),
+                },
+              ] as const
+            ).map(({ label, value, onChange, placeholder, mono, onReset }) => (
+              <div key={label} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <label style={{ fontSize: 11, opacity: 0.7, whiteSpace: 'nowrap', width: 160 }}>{label}</label>
+                <input
+                  value={value}
+                  onChange={e => onChange(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && applyConfig()}
+                  placeholder={placeholder}
+                  style={{
+                    flex: 1,
+                    padding: '3px 6px',
+                    fontSize: 12,
+                    background: '#111',
+                    color: '#fff',
+                    border: '1px solid #555',
+                    borderRadius: 3,
+                    ...(mono ? { fontFamily: 'monospace' } : {}),
+                  }}
+                  autoFocus={label === 'Bee API URL'}
+                />
+                <button
+                  onClick={onReset}
+                  style={{ fontSize: 11, padding: '3px 8px', opacity: 0.6 }}
+                  title="Reset to default"
+                >
+                  Reset
+                </button>
+              </div>
+            ))}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button onClick={applyConfig} style={{ fontSize: 11, padding: '3px 10px' }}>
                 Apply
@@ -354,117 +367,25 @@ const SessionView: React.FC<{
   )
 }
 
+// ── TestPage ──────────────────────────────────────────────────────────────────
+
 const TestPage: React.FC = () => {
-  const [session, setSession] = useState<TestSession | null>(loadSession)
-  const [inputName, setInputName] = useState('')
-  const [transport, setTransport] = useState<Transport>(Transport.SWARM)
+  const { session, login, logout } = useSession()
   const [beeUrl, setBeeUrl] = useState(loadBeeUrl)
   const [stamp, setStamp] = useState(loadStamp)
   const [mutableStamp, setMutableStamp] = useState(loadMutableStamp)
 
-  const login = (name: string) => {
-    const s = createSession(name, transport)
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(s))
-    setSession(s)
-  }
-
-  const logout = () => {
-    sessionStorage.removeItem(SESSION_KEY)
-    setSession(null)
-  }
-
   if (!session) {
     return (
-      <div
-        style={{
-          padding: 32,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 16,
-          maxWidth: 400,
-        }}
-      >
-        <h2 style={{ margin: 0 }}>Swarm Collab Doc</h2>
-        <input
-          value={inputName}
-          onChange={e => setInputName(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && inputName.trim() && login(inputName.trim())}
-          placeholder="Enter username"
-          style={{ padding: 8, fontSize: 16 }}
-          autoFocus
-        />
-        <div
-          style={{
-            display: 'flex',
-            gap: 0,
-            borderRadius: 4,
-            overflow: 'hidden',
-            border: '1px solid #555',
-          }}
-        >
-          <button
-            onClick={() => setTransport(Transport.SWARM)}
-            style={{
-              flex: 1,
-              padding: '6px 0',
-              fontSize: 13,
-              border: 'none',
-              cursor: 'pointer',
-              background: transport === Transport.SWARM ? '#4f8ef7' : '#2a2a2a',
-              color: transport === Transport.SWARM ? '#fff' : '#aaa',
-            }}
-          >
-            Swarm Feed
-          </button>
-          <button
-            onClick={() => setTransport(Transport.BROADCAST)}
-            style={{
-              flex: 1,
-              padding: '6px 0',
-              fontSize: 13,
-              border: 'none',
-              cursor: 'pointer',
-              background: transport === Transport.BROADCAST ? '#4f8ef7' : '#2a2a2a',
-              color: transport === Transport.BROADCAST ? '#fff' : '#aaa',
-            }}
-          >
-            BroadcastChannel
-          </button>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <label style={{ fontSize: 12, opacity: 0.6 }}>Bee API URL</label>
-          <input
-            value={beeUrl}
-            onChange={e => setBeeUrl(e.target.value)}
-            onBlur={() => sessionStorage.setItem(BEE_URL_KEY, beeUrl)}
-            placeholder={DEFAULT_BEE_URL}
-            style={{ padding: 6, fontSize: 13 }}
-          />
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <label style={{ fontSize: 12, opacity: 0.6 }}>STAMP</label>
-          <input
-            value={stamp}
-            onChange={e => setStamp(e.target.value)}
-            onBlur={() => sessionStorage.setItem(STAMP_KEY, stamp)}
-            placeholder={DEFAULT_STAMP || 'batch stamp hex'}
-            style={{ padding: 6, fontSize: 13, fontFamily: 'monospace' }}
-          />
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <label style={{ fontSize: 12, opacity: 0.6 }}>MUTABLE_STAMP</label>
-          <input
-            value={mutableStamp}
-            onChange={e => setMutableStamp(e.target.value)}
-            onBlur={() => sessionStorage.setItem(MUTABLE_STAMP_KEY, mutableStamp)}
-            placeholder={DEFAULT_MUTABLE_STAMP || 'mutable stamp hex'}
-            style={{ padding: 6, fontSize: 13, fontFamily: 'monospace' }}
-          />
-        </div>
-        <button onClick={() => login(inputName.trim())} disabled={!inputName.trim()} style={{ padding: 8 }}>
-          Join
-        </button>
-      </div>
+      <LoginView
+        beeUrl={beeUrl}
+        stamp={stamp}
+        mutableStamp={mutableStamp}
+        onBeeUrlChange={setBeeUrl}
+        onStampChange={setStamp}
+        onMutableStampChange={setMutableStamp}
+        onLogin={login}
+      />
     )
   }
 
