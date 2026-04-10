@@ -4,6 +4,7 @@ import {
   NotificationProvider,
   PLACEHOLDER_STAMP,
   SwarmFeedNotificationProvider,
+  validateStamps,
 } from 'lib'
 import React, { useMemo, useState } from 'react'
 
@@ -72,11 +73,28 @@ const LoginView: React.FC<LoginViewProps> = ({
 }) => {
   const [inputName, setInputName] = useState('')
   const [transport, setTransport] = useState<Transport>(Transport.SWARM)
+  const [validating, setValidating] = useState(false)
+  const [stampError, setStampError] = useState<string | null>(null)
 
-  const submit = () => {
+  const submit = async () => {
     const name = inputName.trim()
 
-    if (name) onLogin(name, transport)
+    if (!name) return
+
+    setStampError(null)
+    setValidating(true)
+
+    try {
+      await validateStamps(beeUrl, stamp, mutableStamp)
+    } catch (err) {
+      setStampError((err as Error).message)
+      setValidating(false)
+
+      return
+    }
+
+    setValidating(false)
+    onLogin(name, transport)
   }
 
   return (
@@ -153,8 +171,13 @@ const LoginView: React.FC<LoginViewProps> = ({
           )}
         </div>
       ))}
-      <button onClick={submit} disabled={!inputName.trim()} style={{ padding: 8 }}>
-        Join
+      {stampError && (
+        <div style={{ fontSize: 12, color: '#f87171', padding: '6px 10px', background: '#2a1010', borderRadius: 4 }}>
+          ⚠ {stampError}
+        </div>
+      )}
+      <button onClick={submit} disabled={!inputName.trim() || validating} style={{ padding: 8 }}>
+        {validating ? 'Checking stamps…' : 'Join'}
       </button>
     </div>
   )

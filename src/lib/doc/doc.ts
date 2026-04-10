@@ -1,4 +1,4 @@
-import { Bee, FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
+import { FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
 import {
   MessageData,
   MessageType,
@@ -9,18 +9,18 @@ import {
 import * as Y from 'yjs'
 
 import { DocSettings, NotificationProvider } from '../interfaces'
+import { MIN_TTL_WARN_DAYS, validateStamps } from '../utils/bee'
 import { decode, encode, indexStrToBigint, remove0x, retryAwaitableAsync, uuidV4 } from '../utils/common'
-import { DOC_FEED_SUFFIX, PLACEHOLDER_STAMP } from '../utils/constants'
+import { DOC_FEED_SUFFIX, JOIN_FEED_INDEX, PLACEHOLDER_STAMP } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
 import { EventEmitter } from '../utils/eventEmitter'
 
-import { DOC_EVENTS, JOIN_FEED_INDEX } from './events'
+import { DOC_EVENTS } from './events'
 import { Members } from './members'
 
 const TAG = 'SwarmDoc'
 const DEBOUNCE_MS = 500
 const DEFAULT_MEMBER_LIST_POLL_INTERVAL_MS = 5000
-const MIN_TTL_WARN_DAYS = 7 // warn if stamp expires in < 7 days
 
 export class SwarmDoc {
   public readonly doc: Y.Doc
@@ -216,45 +216,13 @@ export class SwarmDoc {
     }
   }
 
-  private async validateStamps(): Promise<void> {
-    const bee = new Bee(this.beeApiUrl)
-    const batches = await bee.getPostageBatches()
-    const usable = batches.filter(s => s.usable)
-
-    const checkStamp = (stamp: string, label: string, mustBeMutable = false): void => {
-      if (!stamp || stamp === PLACEHOLDER_STAMP) {
-        console.warn(`${TAG} ${label} stamp is placeholder — uploads rely on smart gateway`)
-
-        return
-      }
-
-      const found = usable.find(s => s.batchID.toString() === stamp)
-
-      if (!found) throw new Error(`${label} stamp ${stamp} is not usable`)
-
-      if (mustBeMutable && found.immutableFlag === true) {
-        throw new Error(`${label} stamp ${stamp} has immutableFlag=true — must be a mutable batch`)
-      }
-
-      const daysLeft = found.duration.toDays()
-
-      if (daysLeft < MIN_TTL_WARN_DAYS) {
-        const msg = `${label} stamp expires in ~${daysLeft.toFixed(1)}d — consider topping up`
-        console.warn(`${TAG} ${msg}`)
-        this.emitter.emit(DOC_EVENTS.DOC_ERROR, new Error(msg))
-      }
-
-      console.log(`${TAG} ${label} stamp OK: ${stamp}${mustBeMutable ? ' (mutable)' : ''}`)
-    }
-
-    checkStamp(this.regularStamp, 'regular')
-    checkStamp(this.mutableStampId, 'mutable', true)
-  }
-
   private async init(): Promise<void> {
     console.log(`${TAG} init: starting`)
     try {
-      await this.validateStamps()
+      await validateStamps(this.beeApiUrl, this.regularStamp, this.mutableStampId, MIN_TTL_WARN_DAYS, msg => {
+        console.warn(`${TAG} ${msg}`)
+        this.emitter.emit(DOC_EVENTS.DOC_ERROR, new Error(msg))
+      })
     } catch (err) {
       this.errorHandler.handleError(err, `${TAG}.validateStamps`)
       this.emitter.emit(DOC_EVENTS.DOC_ERROR, err)
