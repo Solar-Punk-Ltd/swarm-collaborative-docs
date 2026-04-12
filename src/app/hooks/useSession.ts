@@ -4,6 +4,7 @@ import { useState } from 'react'
 export enum Transport {
   SWARM = 'swarm',
   BROADCAST = 'broadcast',
+  WEBRTC = 'webrtc',
 }
 
 export interface Session {
@@ -11,11 +12,12 @@ export interface Session {
   privKey: string
   pubKey: string
   transport: Transport
+  signalingUrl?: string
 }
 
 const SESSION_KEY = 'test_session'
 
-function createSession(username: string, transport: Transport): Session {
+function createSession(username: string, transport: Transport, signalingUrl?: string): Session {
   const signer = getSigner(uuidV4())
 
   return {
@@ -23,6 +25,7 @@ function createSession(username: string, transport: Transport): Session {
     privKey: signer.toHex(),
     pubKey: signer.publicKey().address().toString(),
     transport,
+    signalingUrl,
   }
 }
 
@@ -39,8 +42,8 @@ function loadSession(): Session | null {
 export function useSession() {
   const [session, setSession] = useState<Session | null>(loadSession)
 
-  const login = (username: string, transport: Transport) => {
-    const s = createSession(username, transport)
+  const login = (username: string, transport: Transport, signalingUrl?: string) => {
+    const s = createSession(username, transport, signalingUrl)
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(s))
     setSession(s)
   }

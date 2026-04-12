@@ -46,12 +46,13 @@ export default defineConfig(({ mode }) => {
     build: {
       lib: libOptions,
       rollupOptions: {
-        external: ['@ethersphere/bee-js', 'react', 'react-dom'],
+        external: ['@ethersphere/bee-js', 'react', 'react-dom', 'y-webrtc'],
         output: {
           globals: {
             react: 'React',
             'react-dom': 'ReactDOM',
             '@ethersphere/bee-js': 'BeeJs',
+            'y-webrtc': 'YWebrtc',
           },
         },
       },

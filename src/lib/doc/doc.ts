@@ -6,6 +6,7 @@ import {
   readSingleComment as readDoc,
   writeCommentToIndex as writeDoc,
 } from '@solarpunkltd/comment-system'
+import { WebrtcProvider } from 'y-webrtc'
 import * as Y from 'yjs'
 
 import { DocSettings, NotificationProvider } from '../interfaces'
@@ -32,7 +33,11 @@ export class SwarmDoc {
   private ownIndex: bigint = -1n
   private docFeedId: string
   private docTopic: string
-  private notificationProvider: NotificationProvider
+  private notificationProvider?: NotificationProvider
+  private rtcProvider: WebrtcProvider | null = null
+  private nickname: string
+  private signalingUrls: string[]
+  private iceServers?: RTCIceServer[]
   private beeApiUrl: string
   private regularStamp: string
   private mutableStampId: string
@@ -73,6 +78,9 @@ export class SwarmDoc {
       this.registerMember(memberAddress)
     }
 
+    this.nickname = settings.user.nickname
+    this.signalingUrls = settings.infra.signalingUrls ?? []
+    this.iceServers = settings.infra.iceServers
     this.notificationProvider = settings.notificationProvider
   }
 
@@ -99,16 +107,35 @@ export class SwarmDoc {
 
   // Register a peer address so we can read their doc feed. No-op if already registered.
   private registerMember(address: string): void {
-    if (!this.members.register(address)) return
-    this.notificationProvider.addMember?.(address)
+    if (!this.members.register(address)) {
+      return
+    }
+
+    if (!this.rtcProvider) {
+      this.notificationProvider?.addMember?.(address)
+    }
     console.log(`${TAG} registerMember: ${address.slice(0, 8)}…`)
   }
 
   public start(): void {
+    if (this.signalingUrls.length) {
+      const room = this.docFeedId
+
+      this.rtcProvider = new WebrtcProvider(room, this.doc, {
+        signaling: this.signalingUrls,
+        peerOpts: this.iceServers ? { config: { iceServers: this.iceServers } } : undefined,
+      })
+      this.rtcProvider.awareness.setLocalStateField('user', {
+        address: this.ownAddress,
+        nickname: this.nickname,
+      })
+      this.rtcProvider.awareness.on('change', () => this.onAwarenessChange())
+    }
+
     // Collect incremental Yjs updates; debounce into a single publish.
-    // origin === 'remote' = applied from a peer, skip to avoid echo.
+    // Guard both the legacy 'remote' string origin and y-webrtc provider-instance origin.
     this.doc.on('update', (update: Uint8Array, origin: unknown) => {
-      if (origin === 'remote') return
+      if (this.isRemoteOrigin(origin)) return
       this.pendingUpdates.push(update)
 
       if (this.debounceTimer) clearTimeout(this.debounceTimer)
@@ -121,8 +148,33 @@ export class SwarmDoc {
     })
 
     this.init()
-    this.startFetchProcess()
+
+    // Legacy notification polling — only when no y-webrtc provider is configured
+    if (!this.rtcProvider) this.startFetchProcess()
+
     this.startMemberListPoll()
+  }
+
+  // y-webrtc sets origin to the provider instance, not the string 'remote'.
+  // This guard covers both so Swarm writes are not triggered by remote updates.
+  private isRemoteOrigin(origin: unknown): boolean {
+    return origin === 'remote' || origin === this.rtcProvider
+  }
+
+  private onAwarenessChange(): void {
+    if (!this.rtcProvider) return
+
+    for (const [clientId, state] of this.rtcProvider.awareness.getStates()) {
+      const isSelf = clientId === this.rtcProvider.awareness.clientID
+      const userState = (state as { user?: { address?: string } }).user
+      const address = userState?.address ? remove0x(userState.address.toLowerCase()) : null
+
+      if (!isSelf && address && address !== this.ownAddress && !this.members.has(address)) {
+        this.registerMember(address)
+        this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
+        this.fetchLatestFromMember(address)
+      }
+    }
   }
 
   public stop(): void {
@@ -132,8 +184,10 @@ export class SwarmDoc {
       clearInterval(this.memberListPollTimer)
       this.memberListPollTimer = null
     }
+    this.rtcProvider?.destroy()
+    this.rtcProvider = null
     this.emitter.cleanAll()
-    this.notificationProvider.unsubscribe()
+    this.notificationProvider?.unsubscribe()
     this.fetchProcessRunning = false
     this.doc.destroy()
   }
@@ -194,13 +248,16 @@ export class SwarmDoc {
       this.ownIndex = nextIndex
       console.log(`${TAG} publishSnapshot ✓ index: ${this.ownIndex}`)
 
-      this.notificationProvider.publish({
-        v: 1,
-        topic: this.docTopic,
-        author: this.ownAddress,
-        feedIndex: Number(nextIndex),
-        delta,
-      })
+      // y-webrtc propagates updates automatically via data channels — no manual publish needed
+      if (!this.rtcProvider) {
+        this.notificationProvider?.publish({
+          v: 1,
+          topic: this.docTopic,
+          author: this.ownAddress,
+          feedIndex: Number(nextIndex),
+          delta,
+        })
+      }
     } catch (err) {
       this.errorHandler.handleError(err, `${TAG}.publishSnapshot`)
       this.emitter.emit(DOC_EVENTS.DOC_ERROR, err)
@@ -263,14 +320,17 @@ export class SwarmDoc {
 
     this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
 
-    // JOIN_FEED_INDEX sentinel: announce presence without doc content
-    this.notificationProvider.publish({
-      v: 1,
-      topic: this.docTopic,
-      author: this.ownAddress,
-      feedIndex: JOIN_FEED_INDEX,
-    })
-    console.log(`${TAG} initMemberList: join notification sent`)
+    // JOIN_FEED_INDEX sentinel: announce presence via notification feed (legacy transports only)
+    // y-webrtc uses awareness.setLocalStateField instead — set in start()
+    if (!this.rtcProvider) {
+      this.notificationProvider?.publish({
+        v: 1,
+        topic: this.docTopic,
+        author: this.ownAddress,
+        feedIndex: JOIN_FEED_INDEX,
+      })
+      console.log(`${TAG} initMemberList: join notification sent`)
+    }
 
     const members = this.members.all()
     console.log(`${TAG} initMemberList: ${members.length} peer(s) to fetch`)
@@ -396,7 +456,7 @@ export class SwarmDoc {
     this.fetchProcessRunning = true
     console.log(`${TAG} subscribing to topic: ${this.docTopic}`)
     console.log(`${TAG} known members: ${this.members.all().join(', ') || '(none)'}`)
-    this.notificationProvider.subscribe(this.docTopic, payload => {
+    this.notificationProvider?.subscribe(this.docTopic, payload => {
       const author = remove0x(payload.author.toLowerCase())
 
       if (author === this.ownAddress) return

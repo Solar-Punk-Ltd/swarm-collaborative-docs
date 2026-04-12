@@ -88,6 +88,7 @@ export default defineConfig([
         clearInterval: 'readonly',
         BroadcastChannel: 'readonly',
         MessageEvent: 'readonly',
+        RTCIceServer: 'readonly',
         sessionStorage: 'readonly',
         HTMLTextAreaElement: 'readonly',
         HTMLElement: 'readonly',

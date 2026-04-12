@@ -15,10 +15,12 @@ import { useSwarmDoc } from './hooks/useSwarmDoc'
 const DEFAULT_BEE_URL = process.env.BEE_API_URL || 'http://localhost:1633'
 const DEFAULT_STAMP = process.env.STAMP ?? ''
 const DEFAULT_MUTABLE_STAMP = process.env.MUTABLE_STAMP ?? ''
+const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'ws://localhost:4444'
 
 const BEE_URL_KEY = 'bee_url'
 const STAMP_KEY = 'stamp'
 const MUTABLE_STAMP_KEY = 'mutable_stamp'
+const SIGNALING_URL_KEY = 'signaling_url'
 
 const TEST_ROOM_ID = 'test-room'
 
@@ -38,13 +40,19 @@ function loadMutableStamp(): string {
   return sessionStorage.getItem(MUTABLE_STAMP_KEY) ?? DEFAULT_MUTABLE_STAMP
 }
 
+function loadSignalingUrl(): string {
+  return sessionStorage.getItem(SIGNALING_URL_KEY) ?? DEFAULT_SIGNALING_URL
+}
+
 function makeNotificationProvider(
   transport: Transport,
   beeUrl: string,
   privKey: string,
   mutableStamp: string,
   topic: string,
-): NotificationProvider {
+): NotificationProvider | undefined {
+  if (transport === Transport.WEBRTC) return undefined
+
   if (transport === Transport.BROADCAST) return new BroadcastChannelNotificationProvider()
 
   return new SwarmFeedNotificationProvider(beeUrl, privKey, mutableStamp, topic)
@@ -59,7 +67,13 @@ interface LoginViewProps {
   onBeeUrlChange: (url: string) => void
   onStampChange: (v: string) => void
   onMutableStampChange: (v: string) => void
-  onLogin: (username: string, transport: Transport) => void
+  onLogin: (username: string, transport: Transport, signalingUrl?: string) => void
+}
+
+const TRANSPORT_LABELS: Record<Transport, string> = {
+  [Transport.SWARM]: 'Swarm Feed',
+  [Transport.BROADCAST]: 'BroadcastChannel',
+  [Transport.WEBRTC]: 'WebRTC',
 }
 
 const LoginView: React.FC<LoginViewProps> = ({
@@ -73,6 +87,7 @@ const LoginView: React.FC<LoginViewProps> = ({
 }) => {
   const [inputName, setInputName] = useState('')
   const [transport, setTransport] = useState<Transport>(Transport.SWARM)
+  const [signalingUrl, setSignalingUrl] = useState(loadSignalingUrl)
   const [validating, setValidating] = useState(false)
   const [stampError, setStampError] = useState<string | null>(null)
 
@@ -94,7 +109,7 @@ const LoginView: React.FC<LoginViewProps> = ({
     }
 
     setValidating(false)
-    onLogin(name, transport)
+    onLogin(name, transport, transport === Transport.WEBRTC ? signalingUrl : undefined)
   }
 
   return (
@@ -109,7 +124,7 @@ const LoginView: React.FC<LoginViewProps> = ({
         autoFocus
       />
       <div style={{ display: 'flex', gap: 0, borderRadius: 4, overflow: 'hidden', border: '1px solid #555' }}>
-        {([Transport.SWARM, Transport.BROADCAST] as const).map(t => (
+        {([Transport.SWARM, Transport.BROADCAST, Transport.WEBRTC] as const).map(t => (
           <button
             key={t}
             onClick={() => setTransport(t)}
@@ -123,10 +138,22 @@ const LoginView: React.FC<LoginViewProps> = ({
               color: transport === t ? '#fff' : '#aaa',
             }}
           >
-            {t === Transport.SWARM ? 'Swarm Feed' : 'BroadcastChannel'}
+            {TRANSPORT_LABELS[t]}
           </button>
         ))}
       </div>
+      {transport === Transport.WEBRTC && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={{ fontSize: 12, opacity: 0.6 }}>Signaling URL</label>
+          <input
+            value={signalingUrl}
+            onChange={e => setSignalingUrl(e.target.value)}
+            onBlur={() => sessionStorage.setItem(SIGNALING_URL_KEY, signalingUrl)}
+            placeholder={DEFAULT_SIGNALING_URL}
+            style={{ padding: 6, fontSize: 13, fontFamily: 'monospace' }}
+          />
+        </div>
+      )}
       {(
         [
           {
@@ -235,15 +262,21 @@ const SessionView: React.FC<SessionViewProps> = ({
   const docConfig = useMemo(
     () => ({
       user: { nickname: session.username, privateKey: signer.toHex() },
-      infra: { beeUrl, stamp, mutableStamp, topic },
+      infra: {
+        beeUrl,
+        stamp,
+        mutableStamp,
+        topic,
+        signalingUrls: session.signalingUrl ? [session.signalingUrl] : [],
+      },
       notificationProvider,
     }),
-    [session.username, signer, topic, beeUrl, stamp, mutableStamp, notificationProvider],
+    [session.username, session.signalingUrl, signer, topic, beeUrl, stamp, mutableStamp, notificationProvider],
   )
 
   const { doc, error, members, refreshMemberList } = useSwarmDoc(docConfig)
 
-  const transportLabel = session.transport === Transport.BROADCAST ? 'BroadcastChannel' : 'Swarm Feed'
+  const transportLabel = TRANSPORT_LABELS[session.transport]
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
