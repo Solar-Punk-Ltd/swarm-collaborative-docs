@@ -1,6 +1,7 @@
 import { PrivateKey } from '@ethersphere/bee-js'
 import {
   BroadcastChannelNotificationProvider,
+  DocSettings,
   NotificationProvider,
   PLACEHOLDER_STAMP,
   SwarmFeedNotificationProvider,
@@ -259,7 +260,7 @@ const SessionView: React.FC<SessionViewProps> = ({
     [session.transport, beeUrl, signer, mutableStamp, topic],
   )
 
-  const docConfig = useMemo(
+  const docConfig: DocSettings = useMemo(
     () => ({
       user: { nickname: session.username, privateKey: signer.toHex() },
       infra: {
@@ -267,7 +268,7 @@ const SessionView: React.FC<SessionViewProps> = ({
         stamp,
         mutableStamp,
         topic,
-        signalingUrls: session.signalingUrl ? [session.signalingUrl] : [],
+        signalingUrl: session.signalingUrl,
       },
       notificationProvider,
     }),

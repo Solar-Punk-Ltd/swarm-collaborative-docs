@@ -36,7 +36,7 @@ export class SwarmDoc {
   private notificationProvider?: NotificationProvider
   private rtcProvider: WebrtcProvider | null = null
   private nickname: string
-  private signalingUrls: string[]
+  private signalingUrl: string | undefined
   private iceServers?: RTCIceServer[]
   private beeApiUrl: string
   private regularStamp: string
@@ -79,7 +79,7 @@ export class SwarmDoc {
     }
 
     this.nickname = settings.user.nickname
-    this.signalingUrls = settings.infra.signalingUrls ?? []
+    this.signalingUrl = settings.infra.signalingUrl
     this.iceServers = settings.infra.iceServers
     this.notificationProvider = settings.notificationProvider
   }
@@ -118,11 +118,11 @@ export class SwarmDoc {
   }
 
   public start(): void {
-    if (this.signalingUrls.length) {
+    if (this.signalingUrl) {
       const room = this.docFeedId
 
       this.rtcProvider = new WebrtcProvider(room, this.doc, {
-        signaling: this.signalingUrls,
+        signaling: [this.signalingUrl],
         peerOpts: this.iceServers ? { config: { iceServers: this.iceServers } } : undefined,
       })
       this.rtcProvider.awareness.setLocalStateField('user', {
