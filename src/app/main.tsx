@@ -6,6 +6,6 @@ import TestPage from './TestPage'
 const root = createRoot(document.getElementById('root') as HTMLElement)
 root.render(
   <React.StrictMode>
-    <TestPage />
+    <TestPage />,
   </React.StrictMode>,
 )

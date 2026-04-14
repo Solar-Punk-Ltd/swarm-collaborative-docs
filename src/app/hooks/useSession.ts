@@ -11,27 +11,43 @@ export interface Session {
   username: string
   privKey: string
   pubKey: string
+  topic: string
   transport: Transport
   signalingUrl?: string
+  stunUrl?: string
 }
 
 const SESSION_KEY = 'test_session'
 
-function createSession(username: string, transport: Transport, signalingUrl?: string): Session {
+function createSession(
+  username: string,
+  transport: Transport,
+  topic: string,
+  signalingUrl?: string,
+  stunUrl?: string,
+): Session {
+  const existing = loadSession()
+
+  if (existing?.privKey && existing?.pubKey) {
+    return { username, privKey: existing.privKey, pubKey: existing.pubKey, topic, transport, signalingUrl, stunUrl }
+  }
+
   const signer = getSigner(uuidV4())
 
   return {
     username,
     privKey: signer.toHex(),
     pubKey: signer.publicKey().address().toString(),
+    topic,
     transport,
     signalingUrl,
+    stunUrl,
   }
 }
 
 function loadSession(): Session | null {
   try {
-    const raw = sessionStorage.getItem(SESSION_KEY)
+    const raw = localStorage.getItem(SESSION_KEY)
 
     return raw ? (JSON.parse(raw) as Session) : null
   } catch {
@@ -42,14 +58,13 @@ function loadSession(): Session | null {
 export function useSession() {
   const [session, setSession] = useState<Session | null>(loadSession)
 
-  const login = (username: string, transport: Transport, signalingUrl?: string) => {
-    const s = createSession(username, transport, signalingUrl)
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(s))
+  const login = (username: string, transport: Transport, topic: string, signalingUrl?: string, stunUrl?: string) => {
+    const s = createSession(username, transport, topic, signalingUrl, stunUrl)
+    localStorage.setItem(SESSION_KEY, JSON.stringify(s))
     setSession(s)
   }
 
   const logout = () => {
-    sessionStorage.removeItem(SESSION_KEY)
     setSession(null)
   }
 

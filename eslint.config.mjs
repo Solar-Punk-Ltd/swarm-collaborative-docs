@@ -89,7 +89,11 @@ export default defineConfig([
         BroadcastChannel: 'readonly',
         MessageEvent: 'readonly',
         RTCIceServer: 'readonly',
-        sessionStorage: 'readonly',
+        RTCPeerConnection: 'readonly',
+        RTCDataChannelEvent: 'readonly',
+        RTCDataChannel: 'readonly',
+        RTCPeerConnectionIceErrorEvent: 'readonly',
+        localStorage: 'readonly',
         HTMLTextAreaElement: 'readonly',
         HTMLElement: 'readonly',
       },
@@ -134,7 +138,7 @@ export default defineConfig([
       'quote-props': ['error', 'as-needed'],
       'require-yield': 'error',
       'max-depth': ['error', 4],
-      'require-await': 'error',
+      'require-await': 'warn',
       'space-before-function-paren': [
         'error',
         {

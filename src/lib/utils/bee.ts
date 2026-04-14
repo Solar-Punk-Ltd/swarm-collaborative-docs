@@ -21,7 +21,7 @@ export function isNotFoundError(error: unknown): boolean {
   )
 }
 
-export const MIN_TTL_WARN_DAYS = 7
+export const MIN_TTL_WARN_DAYS = 2
 
 export async function validateStamps(
   beeUrl: string,

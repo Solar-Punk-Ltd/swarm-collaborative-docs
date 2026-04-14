@@ -1,48 +1,55 @@
 import { PrivateKey } from '@ethersphere/bee-js'
 import {
   BroadcastChannelNotificationProvider,
+  DEFAULT_ICE_SERVER_URL,
   DocSettings,
   NotificationProvider,
   PLACEHOLDER_STAMP,
   SwarmFeedNotificationProvider,
   validateStamps,
 } from 'lib'
-import React, { useMemo, useState } from 'react'
+import React, { useCallback, useMemo, useState } from 'react'
+
+import { DEFAULT_BEE_API_URL, DEFAULT_SIGNALING_SERVER_URL, DEFAULT_TOPIC } from '../lib/utils/constants'
 
 import { DocEditor } from './components/DocEditor/DocEditor'
 import { Session, Transport, useSession } from './hooks/useSession'
 import { useSwarmDoc } from './hooks/useSwarmDoc'
 
-const DEFAULT_BEE_URL = process.env.BEE_API_URL || 'http://localhost:1633'
-const DEFAULT_STAMP = process.env.STAMP ?? ''
-const DEFAULT_MUTABLE_STAMP = process.env.MUTABLE_STAMP ?? ''
-const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'ws://localhost:4444'
-
+const TOPIC_KEY = 'topic'
 const BEE_URL_KEY = 'bee_url'
 const STAMP_KEY = 'stamp'
 const MUTABLE_STAMP_KEY = 'mutable_stamp'
 const SIGNALING_URL_KEY = 'signaling_url'
-
-const TEST_ROOM_ID = 'test-room'
-
-function getTopic(id: string): string {
-  return id + (process.env.ENV ?? 'dev')
-}
+const STUN_URL_KEY = 'stun_url'
+const DISABLE_UNTIL_CONNECTED_KEY = 'disable_until_connected'
 
 function loadBeeUrl(): string {
-  return sessionStorage.getItem(BEE_URL_KEY) ?? DEFAULT_BEE_URL
+  return localStorage.getItem(BEE_URL_KEY) ?? DEFAULT_BEE_API_URL
 }
 
 function loadStamp(): string {
-  return sessionStorage.getItem(STAMP_KEY) ?? DEFAULT_STAMP
+  return localStorage.getItem(STAMP_KEY) ?? PLACEHOLDER_STAMP
+}
+
+function loadTopic(): string {
+  return localStorage.getItem(TOPIC_KEY) ?? DEFAULT_TOPIC
 }
 
 function loadMutableStamp(): string {
-  return sessionStorage.getItem(MUTABLE_STAMP_KEY) ?? DEFAULT_MUTABLE_STAMP
+  return localStorage.getItem(MUTABLE_STAMP_KEY) ?? PLACEHOLDER_STAMP
 }
 
 function loadSignalingUrl(): string {
-  return sessionStorage.getItem(SIGNALING_URL_KEY) ?? DEFAULT_SIGNALING_URL
+  return localStorage.getItem(SIGNALING_URL_KEY) ?? DEFAULT_SIGNALING_SERVER_URL
+}
+
+function loadStunUrl(): string {
+  return localStorage.getItem(STUN_URL_KEY) ?? DEFAULT_ICE_SERVER_URL
+}
+
+function loadDisableUntilConnected(): boolean {
+  return localStorage.getItem(DISABLE_UNTIL_CONNECTED_KEY) === 'true'
 }
 
 function makeNotificationProvider(
@@ -62,13 +69,18 @@ function makeNotificationProvider(
 // ── LoginView ─────────────────────────────────────────────────────────────────
 
 interface LoginViewProps {
+  username?: string
   beeUrl: string
   stamp: string
   mutableStamp: string
+  topic: string
+  disableUntilConnected: boolean
   onBeeUrlChange: (url: string) => void
   onStampChange: (v: string) => void
   onMutableStampChange: (v: string) => void
-  onLogin: (username: string, transport: Transport, signalingUrl?: string) => void
+  onTopicChange: (v: string) => void
+  onDisableUntilConnectedChange: (v: boolean) => void
+  onLogin: (username: string, transport: Transport, topic: string, signalingUrl?: string, stunUrl?: string) => void
 }
 
 const TRANSPORT_LABELS: Record<Transport, string> = {
@@ -77,40 +89,72 @@ const TRANSPORT_LABELS: Record<Transport, string> = {
   [Transport.WEBRTC]: 'WebRTC',
 }
 
+enum WebrtcMode {
+  SIGNALING = 'signaling',
+  SWARM = 'swarm',
+}
+
 const LoginView: React.FC<LoginViewProps> = ({
+  username,
   beeUrl,
   stamp,
   mutableStamp,
+  topic,
+  disableUntilConnected,
   onBeeUrlChange,
   onStampChange,
   onMutableStampChange,
+  onTopicChange,
+  onDisableUntilConnectedChange,
   onLogin,
 }) => {
-  const [inputName, setInputName] = useState('')
-  const [transport, setTransport] = useState<Transport>(Transport.SWARM)
-  const [signalingUrl, setSignalingUrl] = useState(loadSignalingUrl)
+  const [inputName, setInputName] = useState(username ?? '')
+  const [transport, setTransport] = useState<Transport>(Transport.WEBRTC)
+  const [serverUrl, setServerUrl] = useState(loadStunUrl() || DEFAULT_ICE_SERVER_URL)
+  const [webrtcMode, setWebrtcMode] = useState<WebrtcMode>(loadSignalingUrl() ? WebrtcMode.SIGNALING : WebrtcMode.SWARM)
   const [validating, setValidating] = useState(false)
-  const [stampError, setStampError] = useState<string | null>(null)
+  const [pageError, setPageError] = useState<string | null>(null)
 
   const submit = async () => {
     const name = inputName.trim()
 
     if (!name) return
 
-    setStampError(null)
+    if (transport === Transport.WEBRTC) {
+      if (!serverUrl) {
+        setPageError('Either STUN or Signaling server URL must be set!')
+        setValidating(false)
+
+        return
+      }
+    }
+
+    setPageError(null)
     setValidating(true)
 
     try {
       await validateStamps(beeUrl, stamp, mutableStamp)
     } catch (err) {
-      setStampError((err as Error).message)
+      setPageError((err as Error).message)
       setValidating(false)
 
       return
     }
 
     setValidating(false)
-    onLogin(name, transport, transport === Transport.WEBRTC ? signalingUrl : undefined)
+
+    let signalingUrl: string | undefined = undefined
+    let stunUrl: string | undefined = undefined
+
+    if (webrtcMode === WebrtcMode.SIGNALING) {
+      signalingUrl = serverUrl
+      localStorage.setItem(STUN_URL_KEY, '')
+    } else {
+      stunUrl = serverUrl
+      localStorage.setItem(SIGNALING_URL_KEY, '')
+    }
+
+    onLogin(name, transport, topic, signalingUrl, stunUrl)
   }
 
   return (
@@ -120,7 +164,7 @@ const LoginView: React.FC<LoginViewProps> = ({
         value={inputName}
         onChange={e => setInputName(e.target.value)}
         onKeyDown={e => e.key === 'Enter' && submit()}
-        placeholder="Enter username"
+        placeholder={username ?? 'Enter username'}
         style={{ padding: 8, fontSize: 16 }}
         autoFocus
       />
@@ -144,15 +188,41 @@ const LoginView: React.FC<LoginViewProps> = ({
         ))}
       </div>
       {transport === Transport.WEBRTC && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <label style={{ fontSize: 12, opacity: 0.6 }}>Signaling URL</label>
-          <input
-            value={signalingUrl}
-            onChange={e => setSignalingUrl(e.target.value)}
-            onBlur={() => sessionStorage.setItem(SIGNALING_URL_KEY, signalingUrl)}
-            placeholder={DEFAULT_SIGNALING_URL}
-            style={{ padding: 6, fontSize: 13, fontFamily: 'monospace' }}
-          />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 0, borderRadius: 4, overflow: 'hidden', border: '1px solid #555' }}>
+            {([WebrtcMode.SIGNALING, WebrtcMode.SWARM] as const).map(mode => (
+              <button
+                key={mode}
+                onClick={() => {
+                  setWebrtcMode(mode)
+                  const itemKey = mode === WebrtcMode.SIGNALING ? SIGNALING_URL_KEY : STUN_URL_KEY
+                  localStorage.setItem(itemKey, '')
+                }}
+                style={{
+                  flex: 1,
+                  padding: '6px 0',
+                  fontSize: 13,
+                  border: 'none',
+                  cursor: 'pointer',
+                  background: webrtcMode === mode ? '#4f8ef7' : '#2a2a2a',
+                  color: webrtcMode === mode ? '#fff' : '#aaa',
+                }}
+              >
+                {mode === WebrtcMode.SIGNALING ? 'Signaling Server URL' : 'Swarm Signaling STUN URL '}
+              </button>
+            ))}
+          </div>
+          {
+            <input
+              value={serverUrl}
+              onChange={e => setServerUrl(e.target.value)}
+              onBlur={() =>
+                localStorage.setItem(webrtcMode === WebrtcMode.SIGNALING ? SIGNALING_URL_KEY : STUN_URL_KEY, serverUrl)
+              }
+              placeholder={webrtcMode === WebrtcMode.SIGNALING ? DEFAULT_SIGNALING_SERVER_URL : DEFAULT_ICE_SERVER_URL}
+              style={{ padding: 6, fontSize: 13, fontFamily: 'monospace' }}
+            />
+          }
         </div>
       )}
       {(
@@ -162,7 +232,7 @@ const LoginView: React.FC<LoginViewProps> = ({
             label: 'Bee API URL',
             value: beeUrl,
             onChange: onBeeUrlChange,
-            placeholder: DEFAULT_BEE_URL,
+            placeholder: DEFAULT_BEE_API_URL,
             mono: false,
           },
           {
@@ -170,7 +240,7 @@ const LoginView: React.FC<LoginViewProps> = ({
             label: 'STAMP',
             value: stamp,
             onChange: onStampChange,
-            placeholder: DEFAULT_STAMP || 'batch stamp hex',
+            placeholder: PLACEHOLDER_STAMP,
             mono: true,
           },
           {
@@ -178,7 +248,15 @@ const LoginView: React.FC<LoginViewProps> = ({
             label: 'MUTABLE_STAMP',
             value: mutableStamp,
             onChange: onMutableStampChange,
-            placeholder: DEFAULT_MUTABLE_STAMP || 'mutable stamp hex',
+            placeholder: PLACEHOLDER_STAMP,
+            mono: true,
+          },
+          {
+            key: TOPIC_KEY,
+            label: 'TOPIC',
+            value: topic,
+            onChange: onTopicChange,
+            placeholder: DEFAULT_TOPIC,
             mono: true,
           },
         ] as const
@@ -188,7 +266,7 @@ const LoginView: React.FC<LoginViewProps> = ({
           <input
             value={value}
             onChange={e => onChange(e.target.value)}
-            onBlur={() => sessionStorage.setItem(key, value)}
+            onBlur={() => localStorage.setItem(key, value)}
             placeholder={placeholder}
             style={{ padding: 6, fontSize: 13, ...(mono ? { fontFamily: 'monospace' } : {}) }}
           />
@@ -199,10 +277,31 @@ const LoginView: React.FC<LoginViewProps> = ({
           )}
         </div>
       ))}
-      {stampError && (
-        <div style={{ fontSize: 12, color: '#f87171', padding: '6px 10px', background: '#2a1010', borderRadius: 4 }}>
-          ⚠ {stampError}
+      {pageError && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 12,
+            color: '#f87171',
+            padding: '6px 10px',
+            background: '#2a1010',
+            borderRadius: 4,
+          }}
+        >
+          <span style={{ flex: 1 }}>⚠ {pageError}</span>
         </div>
+      )}
+      {transport === Transport.WEBRTC && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={disableUntilConnected}
+            onChange={e => onDisableUntilConnectedChange(e.target.checked)}
+          />
+          Disable editing until peer connected
+        </label>
       )}
       <button onClick={submit} disabled={!inputName.trim() || validating} style={{ padding: 8 }}>
         {validating ? 'Checking stamps…' : 'Join'}
@@ -218,9 +317,12 @@ interface SessionViewProps {
   beeUrl: string
   stamp: string
   mutableStamp: string
+  topic: string
+  disableUntilConnected: boolean
   onBeeUrlChange: (url: string) => void
   onStampChange: (v: string) => void
   onMutableStampChange: (v: string) => void
+  onTopicChange: (v: string) => void
   onLogout: () => void
 }
 
@@ -229,29 +331,34 @@ const SessionView: React.FC<SessionViewProps> = ({
   beeUrl,
   stamp,
   mutableStamp,
+  topic,
+  disableUntilConnected,
   onBeeUrlChange,
   onStampChange,
   onMutableStampChange,
+  onTopicChange,
   onLogout,
 }) => {
   const signer = useMemo(() => new PrivateKey(session.privKey), [session.privKey])
-  const topic = getTopic(TEST_ROOM_ID)
   const [configOpen, setConfigOpen] = useState(false)
   const [urlDraft, setUrlDraft] = useState(beeUrl)
   const [stampDraft, setStampDraft] = useState(stamp)
+  const [topicDraft, setTopicDraft] = useState(topic)
   const [mutableStampDraft, setMutableStampDraft] = useState(mutableStamp)
 
   const applyConfig = () => {
     const trimmedUrl = urlDraft.trim()
 
     if (trimmedUrl) {
-      sessionStorage.setItem(BEE_URL_KEY, trimmedUrl)
+      localStorage.setItem(BEE_URL_KEY, trimmedUrl)
       onBeeUrlChange(trimmedUrl)
     }
-    sessionStorage.setItem(STAMP_KEY, stampDraft)
+    localStorage.setItem(STAMP_KEY, stampDraft)
     onStampChange(stampDraft)
-    sessionStorage.setItem(MUTABLE_STAMP_KEY, mutableStampDraft)
+    localStorage.setItem(MUTABLE_STAMP_KEY, mutableStampDraft)
     onMutableStampChange(mutableStampDraft)
+    localStorage.setItem(TOPIC_KEY, topicDraft)
+    onTopicChange(topicDraft)
     setConfigOpen(false)
   }
 
@@ -269,15 +376,43 @@ const SessionView: React.FC<SessionViewProps> = ({
         mutableStamp,
         topic,
         signalingUrl: session.signalingUrl,
+        stunUrl: session.signalingUrl ? undefined : session.stunUrl,
+        iceServers: !session.signalingUrl && session.stunUrl ? [{ urls: session.stunUrl }] : undefined,
       },
       notificationProvider,
     }),
-    [session.username, session.signalingUrl, signer, topic, beeUrl, stamp, mutableStamp, notificationProvider],
+    [
+      session.username,
+      session.signalingUrl,
+      session.stunUrl,
+      signer,
+      topic,
+      beeUrl,
+      stamp,
+      mutableStamp,
+      notificationProvider,
+    ],
   )
 
-  const { doc, error, members, refreshMemberList } = useSwarmDoc(docConfig)
+  const { doc, error, members, connected, refreshMemberList, dismissError } = useSwarmDoc(docConfig)
 
   const transportLabel = TRANSPORT_LABELS[session.transport]
+
+  const displayDocBlock = () => {
+    return (
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+        {error ? (
+          <div style={{ padding: 16, color: '#f87171' }}>
+            Doc error: {error?.message}
+            <button onClick={dismissError} style={{ padding: 8 }}>
+              {'Dismiss'}
+            </button>
+          </div>
+        ) : null}
+        <DocEditor doc={doc} disabled={disableUntilConnected && !connected} />
+      </div>
+    )
+  }
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -319,6 +454,7 @@ const SessionView: React.FC<SessionViewProps> = ({
               setUrlDraft(beeUrl)
               setStampDraft(stamp)
               setMutableStampDraft(mutableStamp)
+              setTopicDraft(topic)
               setConfigOpen(o => !o)
             }}
             style={{
@@ -353,25 +489,33 @@ const SessionView: React.FC<SessionViewProps> = ({
                   label: 'Bee API URL',
                   value: urlDraft,
                   onChange: setUrlDraft,
-                  placeholder: DEFAULT_BEE_URL,
+                  placeholder: DEFAULT_BEE_API_URL,
                   mono: false,
-                  onReset: () => setUrlDraft(DEFAULT_BEE_URL),
+                  onReset: () => setUrlDraft(DEFAULT_BEE_API_URL),
                 },
                 {
                   label: 'STAMP',
                   value: stampDraft,
                   onChange: setStampDraft,
-                  placeholder: DEFAULT_STAMP || 'batch stamp hex',
+                  placeholder: PLACEHOLDER_STAMP,
                   mono: true,
-                  onReset: () => setStampDraft(DEFAULT_STAMP),
+                  onReset: () => setStampDraft(PLACEHOLDER_STAMP),
                 },
                 {
                   label: 'MUTABLE_STAMP',
                   value: mutableStampDraft,
                   onChange: setMutableStampDraft,
-                  placeholder: DEFAULT_MUTABLE_STAMP || 'mutable stamp hex',
+                  placeholder: PLACEHOLDER_STAMP,
                   mono: true,
-                  onReset: () => setMutableStampDraft(DEFAULT_MUTABLE_STAMP),
+                  onReset: () => setMutableStampDraft(PLACEHOLDER_STAMP),
+                },
+                {
+                  label: 'TOPIC',
+                  value: topicDraft,
+                  onChange: setTopicDraft,
+                  placeholder: DEFAULT_TOPIC,
+                  mono: true,
+                  onReset: () => setTopicDraft(DEFAULT_TOPIC),
                 },
               ] as const
             ).map(({ label, value, onChange, placeholder, mono, onReset }) => (
@@ -413,13 +557,7 @@ const SessionView: React.FC<SessionViewProps> = ({
       </div>
 
       {/* Doc */}
-      <div style={{ flex: 1, overflow: 'hidden' }}>
-        {error ? (
-          <div style={{ padding: 16, color: '#f87171' }}>Doc error: {error?.message}</div>
-        ) : (
-          <DocEditor doc={doc} />
-        )}
-      </div>
+      <div style={{ flex: 1, overflow: 'hidden' }}>{displayDocBlock()}</div>
     </div>
   )
 }
@@ -430,18 +568,39 @@ const TestPage: React.FC = () => {
   const { session, login, logout } = useSession()
   const [beeUrl, setBeeUrl] = useState(loadBeeUrl)
   const [stamp, setStamp] = useState(loadStamp)
+  const [topic, setTopic] = useState(loadTopic)
   const [mutableStamp, setMutableStamp] = useState(loadMutableStamp)
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [disableUntilConnected, setDisableUntilConnected] = useState(loadDisableUntilConnected)
 
-  if (!session) {
+  const handleDisableUntilConnectedChange = useCallback(
+    (v: boolean) => {
+      if (session?.transport === Transport.WEBRTC) {
+        setDisableUntilConnected(v)
+        localStorage.setItem(DISABLE_UNTIL_CONNECTED_KEY, String(v))
+      }
+    },
+    [session],
+  )
+
+  if (!isLoggedIn || !session) {
     return (
       <LoginView
+        username={session?.username}
         beeUrl={beeUrl}
         stamp={stamp}
+        topic={topic}
         mutableStamp={mutableStamp}
+        disableUntilConnected={disableUntilConnected}
         onBeeUrlChange={setBeeUrl}
         onStampChange={setStamp}
         onMutableStampChange={setMutableStamp}
-        onLogin={login}
+        onTopicChange={setTopic}
+        onDisableUntilConnectedChange={handleDisableUntilConnectedChange}
+        onLogin={(username, transport, topic, signalingUrl, stunUrl) => {
+          login(username, transport, topic, signalingUrl, stunUrl)
+          setIsLoggedIn(true)
+        }}
       />
     )
   }
@@ -451,11 +610,17 @@ const TestPage: React.FC = () => {
       session={session}
       beeUrl={beeUrl}
       stamp={stamp}
+      topic={topic}
       mutableStamp={mutableStamp}
+      disableUntilConnected={disableUntilConnected}
       onBeeUrlChange={setBeeUrl}
       onStampChange={setStamp}
       onMutableStampChange={setMutableStamp}
-      onLogout={logout}
+      onTopicChange={setTopic}
+      onLogout={() => {
+        setIsLoggedIn(false)
+        logout()
+      }}
     />
   )
 }

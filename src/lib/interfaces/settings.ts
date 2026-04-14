@@ -12,6 +12,7 @@ export interface DocSettings {
     topic: string
     members?: string[]
     signalingUrl?: string // y-webrtc signaling server(s), e.g. 'ws://localhost:4444'
+    stunUrl?: string // stun server, e.g: 'stun:stun.l.google.com:19302'
     iceServers?: RTCIceServer[] // custom STUN/TURN servers; RTCIceServer is a DOM type, no import needed
   }
   notificationProvider?: NotificationProvider // required for Swarm/Broadcast transports; omit when using y-webrtc
