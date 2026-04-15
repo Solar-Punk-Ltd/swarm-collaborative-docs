@@ -28,6 +28,7 @@ export async function validateStamps(
   stamp: string,
   mutableStamp: string,
   ttl: number = MIN_TTL_WARN_DAYS,
+  onlyWarn: boolean = true,
   onWarn?: (msg: string) => void,
 ): Promise<void> {
   const isPlaceholder = (id: string) => !id || id === PLACEHOLDER_STAMP
@@ -46,7 +47,11 @@ export async function validateStamps(
     if (!found) throw new Error(`${label} stamp is not usable`)
 
     if (mustBeMutable && found.immutableFlag) {
-      throw new Error(`${label} stamp must be a mutable batch`)
+      if (onlyWarn) {
+        onWarn?.(`${label} stamp is not mutable`)
+      } else {
+        throw new Error(`${label} stamp must be a mutable batch`)
+      }
     }
 
     const daysLeft = found.duration.toDays()

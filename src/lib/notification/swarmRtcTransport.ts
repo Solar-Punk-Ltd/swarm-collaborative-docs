@@ -11,8 +11,10 @@ import { SwarmSignal } from './swarmSignal'
 
 const TAG = 'SwarmRtcTransport'
 const SIGNAL_POLL_INTERVAL_MS = 5000 // 5 sec
-const OFFER_MAX_AGE_MS = 2 * 60 * 1000 // 2 mins
+const OFFER_MAX_AGE_MS = 5 * 60 * 1000 // 5 mins
+const PEER_RETRY_TIMEOUT_MS = 10_000 // 10 sec
 const CHANNEL_BINARY_TYPE = 'arraybuffer'
+const FALLBACK_ICE_SERVER_URL = 'stun:stun.cloudflare.com:3478'
 
 class SwarmRtcTransport implements DocTransport {
   private errorHandler = ErrorHandler.getInstance()
@@ -99,14 +101,27 @@ class SwarmRtcTransport implements DocTransport {
     console.log(`${TAG} initiating → ${peerAddress.slice(0, 8)}…`)
 
     const pc = new RTCPeerConnection({
-      iceServers: this.iceServers?.length ? this.iceServers : [{ urls: this.stunUrl }],
+      iceServers: this.iceServers?.length
+        ? this.iceServers
+        : [{ urls: this.stunUrl }, { urls: FALLBACK_ICE_SERVER_URL }],
     })
     this.swarmRtcPeers.set(peerAddress, pc)
 
     pc.addEventListener('connectionstatechange', () => {
       console.log(`${TAG} [initiator→${peerAddress.slice(0, 8)}] connectionState=${pc.connectionState}`)
 
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      if (pc.connectionState === 'failed') {
+        this.swarmRtcPeers.delete(peerAddress)
+        this.pendingOfferSessions.delete(peerAddress)
+        console.log(`${TAG} [initiator→${peerAddress.slice(0, 8)}] ICE failed — retrying in 10s`)
+        setTimeout(() => {
+          if (!this.stopped && !this.swarmRtcPeers.has(peerAddress)) {
+            this.initiateConnectionTo(peerAddress).catch(err =>
+              this.errorHandler.handleError(err, `${TAG}.initiateConnectionTo retry`),
+            )
+          }
+        }, PEER_RETRY_TIMEOUT_MS)
+      } else if (pc.connectionState === 'closed') {
         this.swarmRtcPeers.delete(peerAddress)
         this.pendingOfferSessions.delete(peerAddress)
       }
@@ -174,7 +189,9 @@ class SwarmRtcTransport implements DocTransport {
     this.sentAnswerKeys.add(key)
 
     const pc = new RTCPeerConnection({
-      iceServers: this.iceServers?.length ? this.iceServers : [{ urls: this.stunUrl }],
+      iceServers: this.iceServers?.length
+        ? this.iceServers
+        : [{ urls: this.stunUrl }, { urls: FALLBACK_ICE_SERVER_URL }],
     })
     this.swarmRtcPeers.set(peerAddress, pc)
 

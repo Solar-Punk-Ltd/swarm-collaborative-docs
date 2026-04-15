@@ -245,7 +245,7 @@ export class SwarmDoc {
   private async init(): Promise<void> {
     console.log(`${TAG} init: starting`)
     try {
-      await validateStamps(this.beeApiUrl, this.regularStamp, this.mutableStampId, MIN_TTL_WARN_DAYS, msg => {
+      await validateStamps(this.beeApiUrl, this.regularStamp, this.mutableStampId, MIN_TTL_WARN_DAYS, true, msg => {
         console.warn(`${TAG} ${msg}`)
         this.emitter.emit(DOC_EVENTS.DOC_ERROR, new Error(msg))
       })

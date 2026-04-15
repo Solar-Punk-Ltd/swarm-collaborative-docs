@@ -32,8 +32,23 @@ export default defineConfig(({ mode }) => {
     )
   }
 
+  const rollupOptions = isLibBuild
+    ? {
+        external: ['@ethersphere/bee-js', 'react', 'react-dom', 'y-webrtc'],
+        output: {
+          globals: {
+            react: 'React',
+            'react-dom': 'ReactDOM',
+            '@ethersphere/bee-js': 'BeeJs',
+            'y-webrtc': 'YWebrtc',
+          },
+        },
+      }
+    : {}
+
   return {
     plugins: pluginOptions,
+    base: isLibBuild ? '/' : './',
     resolve: {
       alias: { lib: libEntry },
       extensions: ['.ts', '.tsx', '.js', '.jsx', '.css', '.scss'],
@@ -45,17 +60,7 @@ export default defineConfig(({ mode }) => {
     sourcemap: !isProd,
     build: {
       lib: libOptions,
-      rollupOptions: {
-        external: ['@ethersphere/bee-js', 'react', 'react-dom', 'y-webrtc'],
-        output: {
-          globals: {
-            react: 'React',
-            'react-dom': 'ReactDOM',
-            '@ethersphere/bee-js': 'BeeJs',
-            'y-webrtc': 'YWebrtc',
-          },
-        },
-      },
+      rollupOptions,
     },
     server: {
       port: DEFAULT_VITE_DEV_PORT,
