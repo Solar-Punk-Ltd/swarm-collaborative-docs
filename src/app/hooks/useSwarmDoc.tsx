@@ -11,7 +11,7 @@ export interface SwarmDocContext {
   dismissError: () => void
 }
 
-export const useSwarmDoc = ({ user, infra, notificationProvider }: DocSettings): SwarmDocContext => {
+export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
   const docRef = useRef<SwarmDoc | null>(null)
   const [doc, setDoc] = useState<Y.Doc | null>(null)
   const [{ error, members, connected }, setStatus] = useState<{
@@ -34,7 +34,7 @@ export const useSwarmDoc = ({ user, infra, notificationProvider }: DocSettings):
       docRef.current = null
     }
 
-    const swarmDoc = new SwarmDoc({ user, infra, notificationProvider })
+    const swarmDoc = new SwarmDoc({ user, infra })
     docRef.current = swarmDoc
 
     swarmDoc.getEmitter().on(DOC_EVENTS.DOC_ERROR, (err: Error) => setStatus(s => ({ ...s, error: err })))
@@ -50,7 +50,7 @@ export const useSwarmDoc = ({ user, infra, notificationProvider }: DocSettings):
       setDoc(null)
       setStatus({ error: null, members: [], connected: false })
     }
-  }, [user, infra, notificationProvider])
+  }, [user, infra])
 
   const refreshMemberList = () => {
     docRef.current?.refreshMemberList()

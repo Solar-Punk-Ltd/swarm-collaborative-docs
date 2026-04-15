@@ -1,5 +1,6 @@
 import { Bee, FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
 
+import { DocTransport, DocTransportFactory } from '../interfaces/docTransport'
 import { NotificationHandler, NotificationPayload, NotificationProvider } from '../interfaces/notification'
 import { isNotFoundError } from '../utils/bee'
 import { remove0x } from '../utils/common'
@@ -198,4 +199,43 @@ export class SwarmFeedNotificationProvider implements NotificationProvider {
     this.handler = null
     this.members.clear()
   }
+}
+
+class SwarmFeedDocTransport implements DocTransport {
+  private provider: SwarmFeedNotificationProvider
+
+  constructor(beeApiUrl: string, privateKey: string, mutableStamp: string, topic: string) {
+    this.provider = new SwarmFeedNotificationProvider(beeApiUrl, privateKey, mutableStamp, topic)
+  }
+
+  start(): void {}
+
+  stop(): void {
+    this.provider.unsubscribe()
+  }
+
+  subscribe(topic: string, handler: NotificationHandler): void {
+    this.provider.subscribe(topic, handler)
+  }
+
+  publish(payload: NotificationPayload): void {
+    this.provider.publish(payload)
+  }
+
+  connectToPeer(address: string): void {
+    this.provider.addMember(address)
+  }
+
+  isRemoteOrigin(_origin: unknown): boolean {
+    return false
+  }
+}
+
+export function createSwarmFeedTransport(
+  beeApiUrl: string,
+  privateKey: string,
+  mutableStamp: string,
+  topic: string,
+): DocTransportFactory {
+  return _deps => new SwarmFeedDocTransport(beeApiUrl, privateKey, mutableStamp, topic)
 }

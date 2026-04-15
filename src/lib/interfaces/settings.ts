@@ -1,4 +1,4 @@
-import { NotificationProvider } from './notification'
+import { DocTransportFactory } from './docTransport'
 
 export interface DocSettings {
   user: {
@@ -11,11 +11,8 @@ export interface DocSettings {
     mutableStamp?: string // postage batch with immutableFlag=false, used for snapshot writes
     topic: string
     members?: string[]
-    signalingUrl?: string // y-webrtc signaling server(s), e.g. 'ws://localhost:4444'
-    stunUrl?: string // stun server, e.g: 'stun:stun.l.google.com:19302'
-    iceServers?: RTCIceServer[] // custom STUN/TURN servers; RTCIceServer is a DOM type, no import needed
+    transport: DocTransportFactory
   }
-  notificationProvider?: NotificationProvider // required for Swarm/Broadcast transports; omit when using y-webrtc
 }
 
 export interface UserSettings {

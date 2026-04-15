@@ -1,3 +1,4 @@
+import { DocTransport, DocTransportFactory } from '../interfaces/docTransport'
 import { NotificationHandler, NotificationPayload, NotificationProvider } from '../interfaces/notification'
 
 export class BroadcastChannelNotificationProvider implements NotificationProvider {
@@ -23,4 +24,33 @@ export class BroadcastChannelNotificationProvider implements NotificationProvide
       this.channel = null
     }
   }
+}
+
+class BroadcastChannelDocTransport implements DocTransport {
+  private provider = new BroadcastChannelNotificationProvider()
+
+  start(): void {}
+
+  stop(): void {
+    this.provider.unsubscribe()
+  }
+
+  subscribe(topic: string, handler: NotificationHandler): void {
+    this.provider.subscribe(topic, handler)
+  }
+
+  publish(payload: NotificationPayload): void {
+    this.provider.publish(payload)
+  }
+
+  // BroadcastChannel uses a shared channel — no per-peer setup needed
+  connectToPeer(_address: string): void {}
+
+  isRemoteOrigin(_origin: unknown): boolean {
+    return false
+  }
+}
+
+export function createBroadcastChannelTransport(): DocTransportFactory {
+  return _deps => new BroadcastChannelDocTransport()
 }

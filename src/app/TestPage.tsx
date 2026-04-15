@@ -1,11 +1,12 @@
 import { PrivateKey } from '@ethersphere/bee-js'
 import {
-  BroadcastChannelNotificationProvider,
+  createBroadcastChannelTransport,
+  createSwarmFeedTransport,
+  createSwarmRtcTransport,
+  createYWebrtcTransport,
   DEFAULT_ICE_SERVER_URL,
   DocSettings,
-  NotificationProvider,
   PLACEHOLDER_STAMP,
-  SwarmFeedNotificationProvider,
   validateStamps,
 } from 'lib'
 import React, { useCallback, useMemo, useState } from 'react'
@@ -50,20 +51,6 @@ function loadStunUrl(): string {
 
 function loadDisableUntilConnected(): boolean {
   return localStorage.getItem(DISABLE_UNTIL_CONNECTED_KEY) === 'true'
-}
-
-function makeNotificationProvider(
-  transport: Transport,
-  beeUrl: string,
-  privKey: string,
-  mutableStamp: string,
-  topic: string,
-): NotificationProvider | undefined {
-  if (transport === Transport.WEBRTC) return undefined
-
-  if (transport === Transport.BROADCAST) return new BroadcastChannelNotificationProvider()
-
-  return new SwarmFeedNotificationProvider(beeUrl, privKey, mutableStamp, topic)
 }
 
 // ── LoginView ─────────────────────────────────────────────────────────────────
@@ -362,37 +349,53 @@ const SessionView: React.FC<SessionViewProps> = ({
     setConfigOpen(false)
   }
 
-  const notificationProvider = useMemo(
-    () => makeNotificationProvider(session.transport, beeUrl, signer.toHex(), mutableStamp, topic),
-    [session.transport, beeUrl, signer, mutableStamp, topic],
-  )
+  const docConfig: DocSettings = useMemo(() => {
+    const getTransport = () => {
+      if (session.transport === Transport.BROADCAST) {
+        return createBroadcastChannelTransport()
+      }
 
-  const docConfig: DocSettings = useMemo(
-    () => ({
+      if (session.transport === Transport.SWARM) {
+        return createSwarmFeedTransport(beeUrl, signer.toHex(), mutableStamp, topic)
+      }
+
+      if (session.signalingUrl) {
+        return createYWebrtcTransport(session.signalingUrl)
+      }
+
+      let stunUrl = session.stunUrl
+
+      if (!stunUrl) {
+        stunUrl = DEFAULT_ICE_SERVER_URL
+        console.warn(
+          `No Transport option was provided, using defualt SwarmRtcTransport with STUN server url: ${stunUrl}`,
+        )
+      }
+
+      return createSwarmRtcTransport(stunUrl)
+    }
+
+    return {
       user: { nickname: session.username, privateKey: signer.toHex() },
       infra: {
         beeUrl,
         stamp,
         mutableStamp,
         topic,
-        signalingUrl: session.signalingUrl,
-        stunUrl: session.signalingUrl ? undefined : session.stunUrl,
-        iceServers: !session.signalingUrl && session.stunUrl ? [{ urls: session.stunUrl }] : undefined,
+        transport: getTransport(),
       },
-      notificationProvider,
-    }),
-    [
-      session.username,
-      session.signalingUrl,
-      session.stunUrl,
-      signer,
-      topic,
-      beeUrl,
-      stamp,
-      mutableStamp,
-      notificationProvider,
-    ],
-  )
+    }
+  }, [
+    session.username,
+    session.transport,
+    session.signalingUrl,
+    session.stunUrl,
+    signer,
+    topic,
+    beeUrl,
+    stamp,
+    mutableStamp,
+  ])
 
   const { doc, error, members, connected, refreshMemberList, dismissError } = useSwarmDoc(docConfig)
 

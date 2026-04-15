@@ -51,7 +51,6 @@ export class SwarmSignal {
 
       return JSON.parse(result.payload.toUtf8()) as SignalFeedPayload
     } catch (err) {
-      // 404 = no new entry yet (normal); 500 = transient Bee node error — both are non-fatal
       if (!isNotFoundError(err) && !isServerError(err)) {
         this.errorHandler.handleError(err, `${TAG}.read(${peerAddress.slice(0, 8)}…)`)
       }
