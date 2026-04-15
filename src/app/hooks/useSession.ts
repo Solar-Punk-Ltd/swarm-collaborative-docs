@@ -1,23 +1,8 @@
 import { getSigner, uuidV4 } from 'lib'
 import { useState } from 'react'
 
-export enum Transport {
-  SWARM = 'swarm',
-  BROADCAST = 'broadcast',
-  WEBRTC = 'webrtc',
-}
-
-export interface Session {
-  username: string
-  privKey: string
-  pubKey: string
-  topic: string
-  transport: Transport
-  signalingUrl?: string
-  stunUrl?: string
-}
-
-const SESSION_KEY = 'test_session'
+import { SESSION_KEY } from '../utils/constants'
+import { Session, Transport } from '../utils/types'
 
 function createSession(
   username: string,
@@ -25,11 +10,21 @@ function createSession(
   topic: string,
   signalingUrl?: string,
   stunUrl?: string,
+  wakuAddress?: string,
 ): Session {
   const existing = loadSession()
 
   if (existing?.privKey && existing?.pubKey) {
-    return { username, privKey: existing.privKey, pubKey: existing.pubKey, topic, transport, signalingUrl, stunUrl }
+    return {
+      username,
+      privKey: existing.privKey,
+      pubKey: existing.pubKey,
+      topic,
+      transport,
+      signalingUrl,
+      stunUrl,
+      wakuAddress,
+    }
   }
 
   const signer = getSigner(uuidV4())
@@ -42,6 +37,7 @@ function createSession(
     transport,
     signalingUrl,
     stunUrl,
+    wakuAddress,
   }
 }
 
@@ -58,8 +54,15 @@ function loadSession(): Session | null {
 export function useSession() {
   const [session, setSession] = useState<Session | null>(loadSession)
 
-  const login = (username: string, transport: Transport, topic: string, signalingUrl?: string, stunUrl?: string) => {
-    const s = createSession(username, transport, topic, signalingUrl, stunUrl)
+  const login = (
+    username: string,
+    transport: Transport,
+    topic: string,
+    signalingUrl?: string,
+    stunUrl?: string,
+    wakuAddress?: string,
+  ) => {
+    const s = createSession(username, transport, topic, signalingUrl, stunUrl, wakuAddress)
     localStorage.setItem(SESSION_KEY, JSON.stringify(s))
     setSession(s)
   }

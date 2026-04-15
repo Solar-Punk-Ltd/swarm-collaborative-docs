@@ -1,0 +1,140 @@
+.session-view {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+
+  &__error-bar {
+    padding: 16px;
+    color: #f87171;
+  }
+
+  &__doc-block {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  &__header {
+    background: #222;
+    color: #fff;
+    font-size: 13px;
+  }
+
+  &__header-row {
+    padding: 8px 16px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  &__pubkey {
+    font-size: 11px;
+    opacity: 0.6;
+  }
+
+  &__transport-badge {
+    font-size: 11px;
+    opacity: 0.5;
+    padding: 1px 6px;
+    border: 1px solid #555;
+    border-radius: 3px;
+  }
+
+  &__members {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-left: auto;
+  }
+
+  &__member-chip {
+    background: #333;
+    border-radius: 3px;
+    padding: 1px 6px;
+    font-size: 11px;
+  }
+
+  &__member-code {
+    opacity: 0.8;
+  }
+
+  &__btn {
+    font-size: 11px;
+    padding: 2px 6px;
+
+    &--logout {
+      font-size: 12px;
+      padding: 2px 8px;
+    }
+
+    &--refresh {
+      opacity: 0.7;
+    }
+
+    &--config {
+      opacity: 0.6;
+
+      &-open {
+        opacity: 1;
+      }
+    }
+  }
+
+  &__config-panel {
+    padding: 8px 16px;
+    border-top: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  &__config-field {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  &__config-label {
+    font-size: 11px;
+    opacity: 0.7;
+    white-space: nowrap;
+    width: 160px;
+  }
+
+  &__config-input {
+    flex: 1;
+    padding: 3px 6px;
+    font-size: 12px;
+    background: #111;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 3px;
+
+    &--mono {
+      font-family: monospace;
+    }
+  }
+
+  &__config-reset {
+    font-size: 11px;
+    padding: 3px 8px;
+    opacity: 0.6;
+  }
+
+  &__config-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  &__config-apply {
+    font-size: 11px;
+    padding: 3px 10px;
+  }
+
+  &__doc {
+    flex: 1;
+    overflow: hidden;
+  }
+}

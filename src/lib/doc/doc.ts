@@ -260,7 +260,7 @@ export class SwarmDoc {
 
     // No peers at init time — editor is immediately usable, no WebRTC handshake needed
     if (this.members.all().length === 0) {
-      this.emitter.emit(DOC_EVENTS.RTC_CONNECTED, true)
+      this.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
     }
   }
 
@@ -299,7 +299,7 @@ export class SwarmDoc {
       v: 1,
       topic: this.docTopic,
       author: this.ownAddress,
-      feedIndex: JOIN_FEED_INDEX,
+      feedIndex: Number(JOIN_FEED_INDEX),
     })
     console.log(`${TAG} initMemberList: join notification sent`)
 
@@ -433,7 +433,7 @@ export class SwarmDoc {
       if (author === this.ownAddress) return
 
       // JOIN_FEED_INDEX: join notification — register peer and fetch their latest snapshot
-      if (payload.feedIndex === JOIN_FEED_INDEX) {
+      if (payload.feedIndex === Number(JOIN_FEED_INDEX)) {
         console.log(`${TAG} notification: join from ${author.slice(0, 8)}…`)
         this.registerMember(author)
         this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())

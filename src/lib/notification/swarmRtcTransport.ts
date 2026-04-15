@@ -365,7 +365,7 @@ class SwarmRtcTransport implements DocTransport {
   /** Sets up Yjs sync over an open WebRTC data channel. */
   private setupDataChannel(peerAddress: string, channel: RTCDataChannel): void {
     console.log(`${TAG} channel OPEN with ${peerAddress.slice(0, 8)}…`)
-    this.deps.emitter.emit(DOC_EVENTS.RTC_CONNECTED, true)
+    this.deps.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
 
     // Must be set before any messages arrive; default 'blob' causes Uint8Array construction to fail.
     channel.binaryType = CHANNEL_BINARY_TYPE

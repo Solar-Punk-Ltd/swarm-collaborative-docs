@@ -39,7 +39,7 @@ export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
 
     swarmDoc.getEmitter().on(DOC_EVENTS.DOC_ERROR, (err: Error) => setStatus(s => ({ ...s, error: err })))
     swarmDoc.getEmitter().on(DOC_EVENTS.MEMBERS_UPDATED, (m: string[]) => setStatus(s => ({ ...s, members: m })))
-    swarmDoc.getEmitter().on(DOC_EVENTS.RTC_CONNECTED, () => setStatus(s => ({ ...s, connected: true })))
+    swarmDoc.getEmitter().on(DOC_EVENTS.PEERS_CONNECTED, () => setStatus(s => ({ ...s, connected: true })))
 
     swarmDoc.start()
     setDoc(swarmDoc.doc)

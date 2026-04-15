@@ -8,6 +8,7 @@ export { createYWebrtcTransport } from './notification/yWebrtcTransport'
 
 export { createBroadcastChannelTransport } from './notification/broadcastChannel'
 export { createSwarmFeedTransport } from './notification/swarmFeed'
+export { createWakuTransport } from './notification/wakuTransport'
 
 export type { DocSettings } from './interfaces'
 export type { NotificationPayload, NotificationHandler } from './interfaces'
@@ -19,4 +20,4 @@ export { SwarmFeedNotificationProvider } from './notification/swarmFeed'
 
 export { getSigner, validateStamps } from './utils/bee'
 export { indexStrToBigint, uuidV4 } from './utils/common'
-export { PLACEHOLDER_STAMP, JOIN_FEED_INDEX, DEFAULT_ICE_SERVER_URL } from './utils/constants'
+export { PLACEHOLDER_STAMP } from './utils/constants'

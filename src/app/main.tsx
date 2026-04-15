@@ -1,11 +1,11 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 
-import TestPage from './TestPage'
+import TestPage from './pages/TestPage'
 
 const root = createRoot(document.getElementById('root') as HTMLElement)
 root.render(
   <React.StrictMode>
-    <TestPage />,
+    <TestPage />
   </React.StrictMode>,
 )

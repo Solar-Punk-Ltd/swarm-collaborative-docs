@@ -2,7 +2,7 @@ export interface NotificationPayload {
   v: number // protocol version
   topic: string
   author: string
-  feedIndex: number // TODO: why not bigint ?
+  feedIndex: number
   delta?: string // base64-encoded Yjs delta for real-time sync; absent on join/fallback reads
 }
 

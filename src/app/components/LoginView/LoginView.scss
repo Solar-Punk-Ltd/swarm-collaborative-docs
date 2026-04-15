@@ -1,0 +1,102 @@
+.login-view {
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 400px;
+
+  &__title {
+    margin: 0;
+  }
+
+  &__input {
+    padding: 8px;
+    font-size: 16px;
+  }
+
+  &__tab-bar {
+    display: flex;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid #555;
+  }
+
+  &__tab-btn {
+    flex: 1;
+    padding: 6px 0;
+    font-size: 13px;
+    border: none;
+    cursor: pointer;
+    background: #2a2a2a;
+    color: #aaa;
+
+    &--active {
+      background: #4f8ef7;
+      color: #fff;
+    }
+  }
+
+  &__webrtc {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  &__url-input {
+    padding: 6px;
+    font-size: 13px;
+    font-family: monospace;
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  &__field-label {
+    font-size: 12px;
+    opacity: 0.6;
+  }
+
+  &__field-input {
+    padding: 6px;
+    font-size: 13px;
+
+    &--mono {
+      font-family: monospace;
+    }
+  }
+
+  &__stamp-warning {
+    font-size: 11px;
+    color: #fbbf24;
+  }
+
+  &__error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #f87171;
+    padding: 6px 10px;
+    background: #2a1010;
+    border-radius: 4px;
+
+    &-text {
+      flex: 1;
+    }
+  }
+
+  &__checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  &__submit {
+    padding: 8px;
+  }
+}

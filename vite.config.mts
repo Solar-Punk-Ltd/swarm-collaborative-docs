@@ -15,7 +15,7 @@ export default defineConfig(({ mode }) => {
   const isLibBuild = process.env.BUILD_MODE === 'lib'
 
   let libOptions: LibraryOptions | undefined = undefined
-  const pluginOptions: PluginOption[] = [nodePolyfills()]
+  const pluginOptions: PluginOption[] = [nodePolyfills({ exclude: ['vm'] })]
 
   if (isLibBuild) {
     libOptions = {
