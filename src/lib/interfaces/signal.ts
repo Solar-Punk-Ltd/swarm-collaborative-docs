@@ -1,21 +1,27 @@
-// type='offer'  → this peer created an offer for `toAddress`
-// type='answer' → this peer answered an offer from `toAddress`
+/** WebRTC signaling record type stored in the per-user `_signal` Swarm feed. */
 export enum SignalType {
+  /** SDP offer created by the connection initiator. */
   OFFER = 'offer',
+  /** SDP answer created by the connection responder. */
   ANSWER = 'answer',
 }
 
-// A single record in the per-user _signal Swarm feed.
+/** A single WebRTC signaling record. One offer or answer per peer per session. */
 export interface SignalRecord {
   type: SignalType
-  fromAddress: string // Ethereum address of the writer (redundant with feed key, kept for clarity)
-  toAddress: string // Ethereum address of the intended recipient
-  sessionId: string // UUID per RTCPeerConnection; used to correlate offer ↔ answer
+  /** Ethereum address of the record writer. */
+  fromAddress: string
+  /** Ethereum address of the intended recipient. */
+  toAddress: string
+  /** UUID identifying the `RTCPeerConnection` session; correlates offer ↔ answer. */
+  sessionId: string
+  /** Unix timestamp (ms) when the record was written. Used for staleness checks. */
   timestamp: number
-  sdp: string // full SDP with ICE candidates embedded (gathered after icegatheringstatechange='complete')
+  /** Full SDP string with ICE candidates embedded, written after ICE gathering completes. */
+  sdp: string
 }
 
-// Raw JSON payload stored in the per-user _signal Swarm feed
+/** JSON payload stored at each index of the per-user `_signal` Swarm feed. */
 export interface SignalFeedPayload {
   records: SignalRecord[]
 }

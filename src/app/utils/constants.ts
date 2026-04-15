@@ -1,7 +1,6 @@
 export const SESSION_KEY = 'test_session'
 export const TOPIC_KEY = 'topic'
 export const BEE_URL_KEY = 'bee_url'
-export const STAMP_KEY = 'stamp'
 export const MUTABLE_STAMP_KEY = 'mutable_stamp'
 export const SIGNALING_URL_KEY = 'signaling_url'
 export const STUN_URL_KEY = 'stun_url'

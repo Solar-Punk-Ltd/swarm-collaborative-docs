@@ -9,7 +9,6 @@ import {
   DEFAULT_TOPIC,
   MUTABLE_STAMP_KEY,
   SIGNALING_URL_KEY,
-  STAMP_KEY,
   STUN_URL_KEY,
   TOPIC_KEY,
 } from '../../utils/constants'
@@ -21,12 +20,10 @@ import './LoginView.scss'
 interface LoginViewProps {
   username?: string
   beeUrl: string
-  stamp: string
   mutableStamp: string
   topic: string
   disableUntilConnected: boolean
   onBeeUrlChange: (url: string) => void
-  onStampChange: (v: string) => void
   onMutableStampChange: (v: string) => void
   onTopicChange: (v: string) => void
   onDisableUntilConnectedChange: (v: boolean) => void
@@ -43,12 +40,10 @@ interface LoginViewProps {
 export const LoginView: React.FC<LoginViewProps> = ({
   username,
   beeUrl,
-  stamp,
   mutableStamp,
   topic,
   disableUntilConnected,
   onBeeUrlChange,
-  onStampChange,
   onMutableStampChange,
   onTopicChange,
   onDisableUntilConnectedChange,
@@ -79,7 +74,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
     setValidating(true)
 
     try {
-      await validateStamps(beeUrl, stamp, mutableStamp)
+      await validateStamps(beeUrl, mutableStamp)
     } catch (err) {
       setPageError((err as Error).message)
       setValidating(false)
@@ -164,14 +159,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
             onChange: onBeeUrlChange,
             placeholder: DEFAULT_BEE_API_URL,
             mono: false,
-          },
-          {
-            key: STAMP_KEY,
-            label: 'STAMP',
-            value: stamp,
-            onChange: onStampChange,
-            placeholder: PLACEHOLDER_STAMP,
-            mono: true,
           },
           {
             key: MUTABLE_STAMP_KEY,

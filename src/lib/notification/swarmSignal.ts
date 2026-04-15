@@ -13,6 +13,15 @@ function isServerError(error: unknown): boolean {
   return error.message?.includes('500') || false
 }
 
+/**
+ * Reads and writes WebRTC signaling records to a per-user Swarm mutable feed.
+ *
+ * Each peer maintains a single feed index storing a `SignalFeedPayload` (a list of
+ * `SignalRecord` objects). Writes are serialised via an internal queue to prevent
+ * index conflicts when `clearOwn` and `writeRecord` run concurrently.
+ *
+ * Used exclusively by `SwarmRtcTransport`.
+ */
 export class SwarmSignal {
   private readonly bee: Bee
   private readonly ownSigner: PrivateKey

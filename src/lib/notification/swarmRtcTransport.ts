@@ -5,16 +5,16 @@ import { SignalRecord, SignalType } from '../interfaces'
 import { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/docTransport'
 import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
 import { uuidV4 } from '../utils/common'
+import { FALLBACK_ICE_SERVER_URL } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
 
 import { SwarmSignal } from './swarmSignal'
 
 const TAG = 'SwarmRtcTransport'
-const SIGNAL_POLL_INTERVAL_MS = 5000 // 5 sec
-const OFFER_MAX_AGE_MS = 5 * 60 * 1000 // 5 mins
+const SIGNAL_POLL_INTERVAL_MS = 5_000 // 5 sec
+const OFFER_MAX_AGE_MS = 5 * 60 * 1_000 // 5 mins
 const PEER_RETRY_TIMEOUT_MS = 10_000 // 10 sec
 const CHANNEL_BINARY_TYPE = 'arraybuffer'
-const FALLBACK_ICE_SERVER_URL = 'stun:stun.cloudflare.com:3478'
 
 class SwarmRtcTransport implements DocTransport {
   private errorHandler = ErrorHandler.getInstance()
@@ -439,6 +439,24 @@ class SwarmRtcTransport implements DocTransport {
   }
 }
 
+/**
+ * Creates a `DocTransportFactory` using Swarm-signaled WebRTC for peer-to-peer sync.
+ *
+ * WebRTC SDP offer/answer records are written to and read from each peer's
+ * `<topic>_signal` Swarm mutable feed, eliminating the need for a central signaling server.
+ * ICE gathering runs to completion before the SDP is written, so candidates are embedded
+ * in the SDP itself rather than sent incrementally.
+ *
+ * Role assignment is deterministic: the peer with the lower Ethereum address always
+ * acts as the WebRTC initiator, preventing duplicate connection attempts.
+ *
+ * `subscribe` and `publish` are no-ops: Yjs updates flow over WebRTC data channels.
+ * A `NotificationPayload` transport (e.g. `createSwarmFeedTransport`) should be used
+ * alongside this to handle join notifications and snapshot hints for offline peers.
+ *
+ * @param stunUrl Primary STUN server URL (e.g. `"stun:stun.l.google.com:19302"`).
+ * @param iceServers Optional full ICE server list. Overrides the default STUN pair when provided.
+ */
 export function createSwarmRtcTransport(stunUrl: string, iceServers?: RTCIceServer[]): DocTransportFactory {
   return (deps: DocTransportDeps) => new SwarmRtcTransport(stunUrl, iceServers, deps)
 }

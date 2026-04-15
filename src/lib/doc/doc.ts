@@ -9,9 +9,9 @@ import {
 import * as Y from 'yjs'
 
 import { DocSettings, DocTransport } from '../interfaces'
-import { MIN_TTL_WARN_DAYS, validateStamps } from '../utils/bee'
+import { validateStamps } from '../utils/bee'
 import { decode, encode, indexStrToBigint, remove0x, retryAwaitableAsync, uuidV4 } from '../utils/common'
-import { DOC_FEED_SUFFIX, JOIN_FEED_INDEX, PLACEHOLDER_STAMP } from '../utils/constants'
+import { API_VERSION, DOC_FEED_SUFFIX, JOIN_FEED_INDEX, PLACEHOLDER_STAMP } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
 import { EventEmitter } from '../utils/eventEmitter'
 
@@ -21,8 +21,26 @@ import { Members } from './members'
 const TAG = 'SwarmDoc'
 const DEBOUNCE_MS = 500
 const DEFAULT_MEMBER_LIST_POLL_INTERVAL_MS = 5000
+const MIN_TTL_WARN_DAYS = 2
 
+/**
+ * Collaborative Yjs document backed by Swarm persistent storage.
+ *
+ * Each peer writes full Yjs state snapshots to their own per-user Swarm feed and
+ * broadcasts incremental deltas to online peers via the configured `DocTransport`.
+ * On startup, snapshots from all known peers are fetched and merged, so late-joining
+ * peers converge to the same state without any central server.
+ *
+ * Lifecycle:
+ * ```ts
+ * const swarmDoc = new SwarmDoc(settings)
+ * swarmDoc.start()                    // begins transport, snapshot fetch, member poll
+ * // ... use swarmDoc.doc (Y.Doc) ...
+ * swarmDoc.stop()                     // tears down transport and timers
+ * ```
+ */
 export class SwarmDoc {
+  /** The underlying Yjs document. Bind editors directly to this instance. */
   public readonly doc: Y.Doc
 
   private errorHandler = ErrorHandler.getInstance()
@@ -34,7 +52,6 @@ export class SwarmDoc {
   private docTopic: string
   private transport: DocTransport
   private beeApiUrl: string
-  private regularStamp: string
   private mutableStampId: string
   private members: Members
 
@@ -51,7 +68,6 @@ export class SwarmDoc {
     this.signer = new PrivateKey(remove0x(settings.user.privateKey))
     this.ownAddress = this.signer.publicKey().address().toString()
     this.beeApiUrl = settings.infra.beeUrl
-    this.regularStamp = settings.infra.stamp || PLACEHOLDER_STAMP
     this.mutableStampId = settings.infra.mutableStamp || PLACEHOLDER_STAMP
 
     this.docFeedId = settings.infra.topic + DOC_FEED_SUFFIX
@@ -91,13 +107,13 @@ export class SwarmDoc {
     }
   }
 
-  // Derive comment-system options for own doc feed (stamp only needed for writes)
-  private ownFeedOptions(stamp = this.regularStamp): Options {
+  // Derive comment-system options for own doc feed
+  private ownFeedOptions(): Options {
     return {
       identifier: Topic.fromString(this.docFeedId + this.ownAddress).toString(),
       address: this.ownAddress,
       beeApiUrl: this.beeApiUrl,
-      stamp,
+      stamp: this.mutableStampId,
       signer: this.signer,
     }
   }
@@ -108,7 +124,7 @@ export class SwarmDoc {
       identifier: Topic.fromString(this.docFeedId + address).toString(),
       address,
       beeApiUrl: this.beeApiUrl,
-      stamp: this.regularStamp,
+      stamp: this.mutableStampId,
     }
   }
 
@@ -122,6 +138,10 @@ export class SwarmDoc {
     console.log(`${TAG} registerMember: ${address.slice(0, 8)}…`)
   }
 
+  /**
+   * Starts the transport, subscribes to the doc topic, fetches peer snapshots,
+   * and begins the member-list poll. Call once after constructing `SwarmDoc`.
+   */
   public start(): void {
     this.transport.start()
 
@@ -150,6 +170,7 @@ export class SwarmDoc {
     return origin === 'remote' || (this.transport.isRemoteOrigin(origin) ?? false)
   }
 
+  /** Stops the transport, clears all timers, and destroys the Yjs document. */
   public stop(): void {
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
 
@@ -164,6 +185,7 @@ export class SwarmDoc {
     this.doc.destroy()
   }
 
+  /** Returns the event emitter. Subscribe to `DOC_EVENTS` constants for doc lifecycle events. */
   public getEmitter(): EventEmitter {
     return this.emitter
   }
@@ -216,12 +238,12 @@ export class SwarmDoc {
         index: FeedIndex.fromBigInt(nextIndex).toString(),
       }
 
-      await writeDoc(messageObj, FeedIndex.fromBigInt(nextIndex), this.ownFeedOptions(this.mutableStampId))
+      await writeDoc(messageObj, FeedIndex.fromBigInt(nextIndex), this.ownFeedOptions())
       this.ownIndex = nextIndex
       console.log(`${TAG} publishSnapshot ✓ index: ${this.ownIndex}`)
 
       this.transport.publish({
-        v: 1,
+        v: API_VERSION,
         topic: this.docTopic,
         author: this.ownAddress,
         feedIndex: Number(nextIndex),
@@ -245,7 +267,7 @@ export class SwarmDoc {
   private async init(): Promise<void> {
     console.log(`${TAG} init: starting`)
     try {
-      await validateStamps(this.beeApiUrl, this.regularStamp, this.mutableStampId, MIN_TTL_WARN_DAYS, true, msg => {
+      await validateStamps(this.beeApiUrl, this.mutableStampId, MIN_TTL_WARN_DAYS, true, msg => {
         console.warn(`${TAG} ${msg}`)
         this.emitter.emit(DOC_EVENTS.DOC_ERROR, new Error(msg))
       })
@@ -296,7 +318,7 @@ export class SwarmDoc {
 
     // JOIN_FEED_INDEX sentinel: announce presence via transport
     this.transport.publish({
-      v: 1,
+      v: API_VERSION,
       topic: this.docTopic,
       author: this.ownAddress,
       feedIndex: Number(JOIN_FEED_INDEX),
@@ -379,6 +401,10 @@ export class SwarmDoc {
     this.applyYjsBytes(comment.message, `${memberAddress.slice(0, 8)} snapshot idx=${targetIx}`)
   }
 
+  /**
+   * Reads the Swarm consensus member list and registers any newly discovered peers.
+   * Call this to proactively discover peers without waiting for the periodic poll.
+   */
   public async refreshMemberList(): Promise<void> {
     try {
       const members = await this.members.read()

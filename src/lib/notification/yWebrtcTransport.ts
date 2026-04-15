@@ -67,6 +67,22 @@ class YWebrtcTransport implements DocTransport {
   }
 }
 
+/**
+ * Creates a `DocTransportFactory` using y-webrtc for real-time peer-to-peer sync.
+ *
+ * Establishes WebRTC data channels through a WebSocket signaling server (e.g. a
+ * y-webrtc-compatible relay). Peer discovery is automatic via the `awareness` protocol —
+ * no explicit `connectToPeer` calls are needed.
+ *
+ * Newly discovered peers are surfaced via `deps.onPeerDiscovered`, triggering a Swarm
+ * snapshot fetch so document history written while the peer was offline is recovered.
+ *
+ * `subscribe` and `publish` are no-ops: y-webrtc propagates Yjs updates over data channels
+ * internally and also handles cross-tab sync via its built-in BroadcastChannel.
+ *
+ * @param signalingUrl WebSocket URL of the signaling server.
+ * @param iceServers Optional custom ICE server list. Falls back to public STUN if omitted.
+ */
 export function createYWebrtcTransport(signalingUrl: string, iceServers?: RTCIceServer[]): DocTransportFactory {
   return (deps: DocTransportDeps) => new YWebrtcTransport(signalingUrl, iceServers, deps)
 }

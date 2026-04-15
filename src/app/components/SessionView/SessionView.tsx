@@ -17,7 +17,6 @@ import {
   DEFAULT_ICE_SERVER_URL,
   DEFAULT_TOPIC,
   MUTABLE_STAMP_KEY,
-  STAMP_KEY,
   TOPIC_KEY,
 } from '../../utils/constants'
 import { Session, Transport, TRANSPORT_LABELS } from '../../utils/types'
@@ -28,12 +27,10 @@ import './SessionView.scss'
 interface SessionViewProps {
   session: Session
   beeUrl: string
-  stamp: string
   mutableStamp: string
   topic: string
   disableUntilConnected: boolean
   onBeeUrlChange: (url: string) => void
-  onStampChange: (v: string) => void
   onMutableStampChange: (v: string) => void
   onTopicChange: (v: string) => void
   onLogout: () => void
@@ -42,12 +39,10 @@ interface SessionViewProps {
 export const SessionView: React.FC<SessionViewProps> = ({
   session,
   beeUrl,
-  stamp,
   mutableStamp,
   topic,
   disableUntilConnected,
   onBeeUrlChange,
-  onStampChange,
   onMutableStampChange,
   onTopicChange,
   onLogout,
@@ -55,7 +50,6 @@ export const SessionView: React.FC<SessionViewProps> = ({
   const signer = useMemo(() => new PrivateKey(session.privKey), [session.privKey])
   const [configOpen, setConfigOpen] = useState(false)
   const [urlDraft, setUrlDraft] = useState(beeUrl)
-  const [stampDraft, setStampDraft] = useState(stamp)
   const [topicDraft, setTopicDraft] = useState(topic)
   const [mutableStampDraft, setMutableStampDraft] = useState(mutableStamp)
 
@@ -66,8 +60,6 @@ export const SessionView: React.FC<SessionViewProps> = ({
       localStorage.setItem(BEE_URL_KEY, trimmedUrl)
       onBeeUrlChange(trimmedUrl)
     }
-    localStorage.setItem(STAMP_KEY, stampDraft)
-    onStampChange(stampDraft)
     localStorage.setItem(MUTABLE_STAMP_KEY, mutableStampDraft)
     onMutableStampChange(mutableStampDraft)
     localStorage.setItem(TOPIC_KEY, topicDraft)
@@ -115,7 +107,6 @@ export const SessionView: React.FC<SessionViewProps> = ({
       user: { nickname: session.username, privateKey: signer.toHex() },
       infra: {
         beeUrl,
-        stamp,
         mutableStamp,
         topic,
         transport: getTransport(),
@@ -130,7 +121,6 @@ export const SessionView: React.FC<SessionViewProps> = ({
     signer,
     topic,
     beeUrl,
-    stamp,
     mutableStamp,
   ])
 
@@ -190,7 +180,6 @@ export const SessionView: React.FC<SessionViewProps> = ({
           <button
             onClick={() => {
               setUrlDraft(beeUrl)
-              setStampDraft(stamp)
               setMutableStampDraft(mutableStamp)
               setTopicDraft(topic)
               setConfigOpen(o => !o)
@@ -218,14 +207,6 @@ export const SessionView: React.FC<SessionViewProps> = ({
                   placeholder: DEFAULT_BEE_API_URL,
                   mono: false,
                   onReset: () => setUrlDraft(DEFAULT_BEE_API_URL),
-                },
-                {
-                  label: 'STAMP',
-                  value: stampDraft,
-                  onChange: setStampDraft,
-                  placeholder: PLACEHOLDER_STAMP,
-                  mono: true,
-                  onReset: () => setStampDraft(PLACEHOLDER_STAMP),
                 },
                 {
                   label: 'MUTABLE_STAMP',

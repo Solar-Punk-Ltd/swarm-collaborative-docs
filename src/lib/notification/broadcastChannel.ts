@@ -1,6 +1,12 @@
 import { DocTransport, DocTransportFactory } from '../interfaces/docTransport'
 import { NotificationHandler, NotificationPayload, NotificationProvider } from '../interfaces/notification'
 
+/**
+ * `NotificationProvider` backed by the browser `BroadcastChannel` API.
+ *
+ * Delivers messages between same-origin tabs/windows sharing the same topic channel.
+ * Useful for development and multi-tab testing — does not cross network boundaries.
+ */
 export class BroadcastChannelNotificationProvider implements NotificationProvider {
   private channel: BroadcastChannel | null = null
 
@@ -51,6 +57,13 @@ class BroadcastChannelDocTransport implements DocTransport {
   }
 }
 
+/**
+ * Creates a `DocTransportFactory` using the browser `BroadcastChannel` API.
+ *
+ * Intended for same-origin multi-tab testing. Does not work across devices or origins.
+ * When using y-webrtc (`createYWebrtcTransport`), this transport is redundant because
+ * y-webrtc's built-in BroadcastChannel already handles cross-tab Y.js sync.
+ */
 export function createBroadcastChannelTransport(): DocTransportFactory {
   return _deps => new BroadcastChannelDocTransport()
 }

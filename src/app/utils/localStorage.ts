@@ -9,7 +9,6 @@ import {
   DISABLE_UNTIL_CONNECTED_KEY,
   MUTABLE_STAMP_KEY,
   SIGNALING_URL_KEY,
-  STAMP_KEY,
   STUN_URL_KEY,
   TOPIC_KEY,
   WAKU_ADDRESS_KEY,
@@ -17,10 +16,6 @@ import {
 
 export function loadBeeUrl(): string {
   return localStorage.getItem(BEE_URL_KEY) ?? DEFAULT_BEE_API_URL
-}
-
-export function loadStamp(): string {
-  return localStorage.getItem(STAMP_KEY) ?? PLACEHOLDER_STAMP
 }
 
 export function loadTopic(): string {

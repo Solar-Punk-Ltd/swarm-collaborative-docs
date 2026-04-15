@@ -167,6 +167,20 @@ class WakuDocTransport implements DocTransport {
   }
 }
 
+/**
+ * Creates a `DocTransportFactory` using the Waku network for real-time notifications.
+ *
+ * Spins up a Waku light node that connects to the decentralised Waku network via
+ * libp2p gossipsub. Outgoing payloads are sent with LightPush; incoming messages are
+ * received via the Filter protocol (push-based, low latency).
+ *
+ * Node initialisation is asynchronous. `subscribe` and `publish` calls made before
+ * the node is ready are buffered and drained automatically once the node connects.
+ * `DOC_EVENTS.PEERS_CONNECTED` is emitted when the node reaches a healthy state.
+ *
+ * @param bootstrapPeers Optional list of libp2p multiaddr bootstrap peers.
+ *   When omitted, the Waku default bootstrap set is used (`defaultBootstrap: true`).
+ */
 export function createWakuTransport(bootstrapPeers?: string[]): DocTransportFactory {
   return (deps: DocTransportDeps) => new WakuDocTransport(deps, bootstrapPeers)
 }

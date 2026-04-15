@@ -8,11 +8,15 @@ import { ErrorHandler } from '../utils/error'
 const TAG = 'Members'
 
 /**
- * Owns both the Swarm consensus feed (persistent discovery) and the local
- * runtime set of known peers (in-memory session state).
+ * Manages the set of known peers for a collaborative doc session.
  *
- * The consensus key is derived deterministically from rawTopic so anyone who
- * knows the room topic can read and write without out-of-band key sharing.
+ * Two layers of state:
+ * - **Local session** — in-memory set of registered peer addresses and their last known feed index.
+ * - **Swarm consensus** — append-only feed written by all peers, providing persistent discovery
+ *   so late-joining peers can find each other without out-of-band key sharing.
+ *
+ * The consensus signer is derived deterministically from the room topic,
+ * so any peer who knows the topic can read and write the member list.
  * Last-write-wins; simultaneous join conflicts are acceptable.
  */
 export class Members {
@@ -42,7 +46,10 @@ export class Members {
 
   // ── Local session tracking ────────────────────────────────────────────────
 
-  /** Adds address to the local set. Returns true if it was newly registered. */
+  /**
+   * Adds `address` to the local peer set.
+   * @returns `true` if the address was newly added, `false` if already present.
+   */
   register(address: string): boolean {
     if (this.addresses.has(address)) return false
     this.addresses.add(address)
@@ -51,10 +58,12 @@ export class Members {
     return true
   }
 
+  /** Returns `true` if `address` is in the local peer set. */
   has(address: string): boolean {
     return this.addresses.has(address)
   }
 
+  /** Returns all registered peer addresses. */
   all(): string[] {
     return [...this.addresses]
   }
@@ -64,13 +73,17 @@ export class Members {
     return this.indices.get(address) ?? -1n
   }
 
+  /** Records the latest applied Swarm feed index for `address`. */
   setIndex(address: string, index: bigint): void {
     this.indices.set(address, index)
   }
 
   // ── Swarm consensus feed ──────────────────────────────────────────────────
 
-  /** Returns the current member list from Swarm, or [] if none exists. */
+  /**
+   * Reads the current member list from the Swarm consensus feed.
+   * @returns Array of Ethereum addresses, or `[]` if the feed does not exist yet.
+   */
   async read(): Promise<string[]> {
     try {
       const reader = this.bee.makeFeedReader(this.topic, this.address)

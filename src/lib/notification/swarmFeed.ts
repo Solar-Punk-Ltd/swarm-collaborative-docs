@@ -14,14 +14,22 @@ function isAbortError(error: unknown): boolean {
 
 const POLL_INTERVAL_MS = 1500
 const SLOW_POLL_INTERVAL_MS = 5000
-// Consecutive empty poll cycles before slowing down
 const SLOW_POLL_THRESHOLD = 5
-// Max notifications to drain per member per poll cycle (handles burst edits)
 const MAX_DRAIN = 10
-// How long the Bee node searches the network for a chunk before returning 500
 const CHUNK_RETRIEVAL_TIMEOUT_MS = '1000ms'
 const TAG = 'SwarmFeedNotificationProvider'
 
+/**
+ * Notification transport backed by per-user Swarm mutable feeds.
+ *
+ * Each peer writes outgoing `NotificationPayload` objects to their own
+ * `<topic>_notify<address>` feed. Incoming notifications are obtained by
+ * polling the feeds of all registered peers at a 1.5s interval, automatically
+ * backing off to 5s when no new messages are found.
+ *
+ * Implements both `NotificationProvider` (for standalone use) and the
+ * `DocTransport`-compatible `SwarmFeedDocTransport` wrapper (via `createSwarmFeedTransport`).
+ */
 export class SwarmFeedNotificationProvider implements NotificationProvider {
   private bee: Bee
   private signer: PrivateKey
@@ -231,6 +239,18 @@ class SwarmFeedDocTransport implements DocTransport {
   }
 }
 
+/**
+ * Creates a `DocTransportFactory` that delivers notifications via Swarm mutable feeds.
+ *
+ * Use this transport when peers share a Bee node API and need persistent,
+ * offline-tolerant message delivery. Notifications survive node restarts because
+ * they are stored on Swarm feeds rather than kept in memory.
+ *
+ * @param beeApiUrl Bee node HTTP API URL.
+ * @param privateKey Signer's secp256k1 private key (hex).
+ * @param mutableStamp Mutable postage batch ID for notification feed writes.
+ * @param topic Room topic string (used to derive per-user feed identifiers).
+ */
 export function createSwarmFeedTransport(
   beeApiUrl: string,
   privateKey: string,

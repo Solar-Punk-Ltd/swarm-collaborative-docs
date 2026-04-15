@@ -1,5 +1,6 @@
 import { Logger } from './logger'
 
+/** Singleton error handler that logs errors via `Logger`. */
 export class ErrorHandler {
   private static instance: ErrorHandler
   private logger = Logger.getInstance()

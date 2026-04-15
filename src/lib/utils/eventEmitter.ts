@@ -4,6 +4,7 @@ interface Events {
   [key: string]: Listener<any>[]
 }
 
+/** Minimal typed event emitter used internally by `SwarmDoc` to surface lifecycle events. */
 export class EventEmitter {
   private events: Events = {}
 
