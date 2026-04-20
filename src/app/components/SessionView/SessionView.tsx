@@ -3,6 +3,7 @@ import {
   createBroadcastChannelTransport,
   createSwarmFeedTransport,
   createSwarmRtcTransport,
+  createSwarmTransport,
   createWakuTransport,
   createYWebrtcTransport,
   DocSettings,
@@ -87,6 +88,10 @@ export const SessionView: React.FC<SessionViewProps> = ({
         return createWakuTransport(wakuAddress)
       }
 
+      if (session.transport === Transport.SWARM_PUBSUB) {
+        return createSwarmTransport(session.brokerPeer ?? '')
+      }
+
       if (session.signalingUrl) {
         return createYWebrtcTransport(session.signalingUrl)
       }
@@ -114,6 +119,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
     }
   }, [
     session.username,
+    session.brokerPeer,
     session.transport,
     session.signalingUrl,
     session.stunUrl,

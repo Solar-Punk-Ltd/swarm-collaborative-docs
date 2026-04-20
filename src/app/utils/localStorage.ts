@@ -2,6 +2,7 @@ import { PLACEHOLDER_STAMP } from 'lib'
 
 import {
   BEE_URL_KEY,
+  BROKER_PEER_KEY,
   DEFAULT_BEE_API_URL,
   DEFAULT_ICE_SERVER_URL,
   DEFAULT_SIGNALING_SERVER_URL,
@@ -36,6 +37,10 @@ export function loadStunUrl(): string {
 
 export function loadWakuAddress(): string {
   return localStorage.getItem(WAKU_ADDRESS_KEY) || ''
+}
+
+export function loadBrokerPeer(): string {
+  return localStorage.getItem(BROKER_PEER_KEY) || ''
 }
 
 export function loadDisableUntilConnected(): boolean {

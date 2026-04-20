@@ -39,8 +39,8 @@ const TestPage: React.FC = () => {
         onMutableStampChange={setMutableStamp}
         onTopicChange={setTopic}
         onDisableUntilConnectedChange={handleDisableUntilConnectedChange}
-        onLogin={(username, transport, topic, signalingUrl, stunUrl, wakuAddress) => {
-          login(username, transport, topic, signalingUrl, stunUrl, wakuAddress)
+        onLogin={(username, transport, topic, signalingUrl, stunUrl, wakuAddress, brokerPeer) => {
+          login(username, transport, topic, signalingUrl, stunUrl, wakuAddress, brokerPeer)
           setIsLoggedIn(true)
         }}
       />

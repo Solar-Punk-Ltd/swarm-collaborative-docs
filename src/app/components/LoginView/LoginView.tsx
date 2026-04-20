@@ -3,6 +3,7 @@ import React, { useState } from 'react'
 
 import {
   BEE_URL_KEY,
+  BROKER_PEER_KEY,
   DEFAULT_BEE_API_URL,
   DEFAULT_ICE_SERVER_URL,
   DEFAULT_SIGNALING_SERVER_URL,
@@ -12,7 +13,7 @@ import {
   STUN_URL_KEY,
   TOPIC_KEY,
 } from '../../utils/constants'
-import { loadStunUrl } from '../../utils/localStorage'
+import { loadBrokerPeer, loadStunUrl } from '../../utils/localStorage'
 import { Transport, TRANSPORT_LABELS, WebrtcMode } from '../../utils/types'
 
 import './LoginView.scss'
@@ -34,8 +35,17 @@ interface LoginViewProps {
     signalingUrl?: string,
     stunUrl?: string,
     wakuAddress?: string,
+    brokerPeer?: string,
   ) => void
 }
+
+const Transports = [
+  Transport.SWARM,
+  Transport.BROADCAST,
+  Transport.WEBRTC,
+  Transport.WAKU,
+  Transport.SWARM_PUBSUB,
+] as const
 
 export const LoginView: React.FC<LoginViewProps> = ({
   username,
@@ -53,6 +63,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [transport, setTransport] = useState<Transport>(Transport.WEBRTC)
   const [serverUrl, setServerUrl] = useState(loadStunUrl() || DEFAULT_ICE_SERVER_URL)
   const [webrtcMode, setWebrtcMode] = useState<WebrtcMode>(loadStunUrl() ? WebrtcMode.SWARM : WebrtcMode.SIGNALING)
+  const [brokerPeer, setBrokerPeer] = useState(loadBrokerPeer())
   const [validating, setValidating] = useState(false)
   const [pageError, setPageError] = useState<string | null>(null)
 
@@ -64,6 +75,15 @@ export const LoginView: React.FC<LoginViewProps> = ({
     if (transport === Transport.WEBRTC) {
       if (!serverUrl) {
         setPageError('Either STUN or Signaling server URL must be set!')
+        setValidating(false)
+
+        return
+      }
+    }
+
+    if (transport === Transport.SWARM_PUBSUB) {
+      if (!brokerPeer.trim()) {
+        setPageError('Broker peer multiaddress is required for Swarm Pubsub!')
         setValidating(false)
 
         return
@@ -95,7 +115,8 @@ export const LoginView: React.FC<LoginViewProps> = ({
       localStorage.setItem(SIGNALING_URL_KEY, '')
     }
 
-    onLogin(name, transport, topic, signalingUrl, stunUrl)
+    const peer = brokerPeer.trim() || undefined
+    onLogin(name, transport, topic, signalingUrl, stunUrl, undefined, peer)
   }
 
   return (
@@ -110,7 +131,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
         autoFocus
       />
       <div className="login-view__tab-bar">
-        {([Transport.SWARM, Transport.BROADCAST, Transport.WEBRTC, Transport.WAKU] as const).map(t => (
+        {Transports.map(t => (
           <button
             key={t}
             onClick={() => setTransport(t)}
@@ -148,6 +169,18 @@ export const LoginView: React.FC<LoginViewProps> = ({
               className="login-view__url-input"
             />
           }
+        </div>
+      )}
+      {transport === Transport.SWARM_PUBSUB && (
+        <div className="login-view__field">
+          <label className="login-view__field-label">Broker Peer</label>
+          <input
+            value={brokerPeer}
+            onChange={e => setBrokerPeer(e.target.value)}
+            onBlur={() => localStorage.setItem(BROKER_PEER_KEY, brokerPeer)}
+            placeholder="/ip4/1.2.3.4/tcp/1634/p2p/QmXxxx…"
+            className="login-view__url-input"
+          />
         </div>
       )}
       {(

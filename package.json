@@ -33,7 +33,7 @@
     "init:husky": "pnpm husky install"
   },
   "dependencies": {
-    "@ethersphere/bee-js": "^11.1.1",
+    "@ethersphere/bee-js": "file:/Users/ujvaribalint/repos/ethersphere/apiary-suite/bee-js/",
     "@solarpunkltd/comment-system": "^1.9.2",
     "@waku/sdk": "^0.0.36",
     "react": "^19.2.4",

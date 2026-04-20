@@ -3,6 +3,7 @@ export enum Transport {
   BROADCAST = 'broadcast',
   WEBRTC = 'webrtc',
   WAKU = 'waku',
+  SWARM_PUBSUB = 'swarm-pubsub',
 }
 
 export interface Session {
@@ -14,6 +15,7 @@ export interface Session {
   signalingUrl?: string
   stunUrl?: string
   wakuAddress?: string
+  brokerPeer?: string
 }
 
 export const TRANSPORT_LABELS: Record<Transport, string> = {
@@ -21,6 +23,7 @@ export const TRANSPORT_LABELS: Record<Transport, string> = {
   [Transport.BROADCAST]: 'BroadcastChannel',
   [Transport.WEBRTC]: 'WebRTC',
   [Transport.WAKU]: 'Waku',
+  [Transport.SWARM_PUBSUB]: 'Swarm Pubsub',
 }
 
 export enum WebrtcMode {

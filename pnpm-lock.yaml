@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@ethersphere/bee-js':
-        specifier: ^11.1.1
-        version: 11.1.1
+        specifier: file:/Users/ujvaribalint/repos/ethersphere/apiary-suite/bee-js/
+        version: file:../../ethersphere/apiary-suite/bee-js
       '@solarpunkltd/comment-system':
         specifier: ^1.9.2
         version: 1.9.2
@@ -339,6 +339,10 @@ packages:
 
   '@ethersphere/bee-js@11.1.1':
     resolution: {integrity: sha512-s2IpuVpy74cJyhj5yugO3+c9eR/r9TZsVJABk2iHWtTVkoA1qZdvgUjzV0w962o1gXrmYdxX4NOmlyIEpY11iQ==}
+    engines: {bee: 2.4.0-390a402e, beeApiVersion: 7.2.0}
+
+  '@ethersphere/bee-js@file:../../ethersphere/apiary-suite/bee-js':
+    resolution: {directory: ../../ethersphere/apiary-suite/bee-js, type: directory}
     engines: {bee: 2.4.0-390a402e, beeApiVersion: 7.2.0}
 
   '@ethersproject/bytes@5.8.0':
@@ -3842,6 +3846,19 @@ snapshots:
       levn: 0.4.1
 
   '@ethersphere/bee-js@11.1.1':
+    dependencies:
+      axios: 0.30.3(debug@4.4.3)
+      cafe-utility: 33.8.0
+      debug: 4.4.3
+      isomorphic-ws: 4.0.1(ws@8.20.0)
+      semver: 7.7.4
+      ws: 8.20.0
+    transitivePeerDependencies:
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+
+  '@ethersphere/bee-js@file:../../ethersphere/apiary-suite/bee-js':
     dependencies:
       axios: 0.30.3(debug@4.4.3)
       cafe-utility: 33.8.0

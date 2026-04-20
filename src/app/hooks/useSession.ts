@@ -11,6 +11,7 @@ function createSession(
   signalingUrl?: string,
   stunUrl?: string,
   wakuAddress?: string,
+  brokerPeer?: string,
 ): Session {
   const existing = loadSession()
 
@@ -24,6 +25,7 @@ function createSession(
       signalingUrl,
       stunUrl,
       wakuAddress,
+      brokerPeer,
     }
   }
 
@@ -38,6 +40,7 @@ function createSession(
     signalingUrl,
     stunUrl,
     wakuAddress,
+    brokerPeer,
   }
 }
 
@@ -61,8 +64,9 @@ export function useSession() {
     signalingUrl?: string,
     stunUrl?: string,
     wakuAddress?: string,
+    brokerPeer?: string,
   ) => {
-    const s = createSession(username, transport, topic, signalingUrl, stunUrl, wakuAddress)
+    const s = createSession(username, transport, topic, signalingUrl, stunUrl, wakuAddress, brokerPeer)
     localStorage.setItem(SESSION_KEY, JSON.stringify(s))
     setSession(s)
   }
