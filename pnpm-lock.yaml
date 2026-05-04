@@ -9,14 +9,17 @@ importers:
   .:
     dependencies:
       '@ethersphere/bee-js':
-        specifier: file:/Users/ujvaribalint/repos/ethersphere/apiary-suite/bee-js/
-        version: file:../../ethersphere/apiary-suite/bee-js
+        specifier: github:Apiary-Suite/bee-js
+        version: https://codeload.github.com/Apiary-Suite/bee-js/tar.gz/c76c13de3b5cbed76fa1d840fc0927ce4cdba0a0
       '@solarpunkltd/comment-system':
         specifier: ^1.9.2
         version: 1.9.2
       '@waku/sdk':
         specifier: ^0.0.36
         version: 0.0.36(@multiformats/multiaddr@12.5.1)
+      lucide-react:
+        specifier: ^1.8.0
+        version: 1.14.0(react@19.2.4)
       react:
         specifier: ^19.2.4
         version: 19.2.4
@@ -341,8 +344,9 @@ packages:
     resolution: {integrity: sha512-s2IpuVpy74cJyhj5yugO3+c9eR/r9TZsVJABk2iHWtTVkoA1qZdvgUjzV0w962o1gXrmYdxX4NOmlyIEpY11iQ==}
     engines: {bee: 2.4.0-390a402e, beeApiVersion: 7.2.0}
 
-  '@ethersphere/bee-js@file:../../ethersphere/apiary-suite/bee-js':
-    resolution: {directory: ../../ethersphere/apiary-suite/bee-js, type: directory}
+  '@ethersphere/bee-js@https://codeload.github.com/Apiary-Suite/bee-js/tar.gz/c76c13de3b5cbed76fa1d840fc0927ce4cdba0a0':
+    resolution: {tarball: https://codeload.github.com/Apiary-Suite/bee-js/tar.gz/c76c13de3b5cbed76fa1d840fc0927ce4cdba0a0}
+    version: 11.1.1
     engines: {bee: 2.4.0-390a402e, beeApiVersion: 7.2.0}
 
   '@ethersproject/bytes@5.8.0':
@@ -2549,6 +2553,11 @@ packages:
     resolution: {integrity: sha512-Jo6dJ04CmSjuznwJSS3pUeWmd/H0ffTlkXXgwZi+eq1UCmqQwCh+eLsYOYCwY991i2Fah4h1BEMCx4qThGbsiA==}
     engines: {node: '>=10'}
 
+  lucide-react@1.14.0:
+    resolution: {integrity: sha512-+1mdWcfSJVUsaTIjN9zoezmUhfXo5l0vP7ekBMPo3jcS/aIkxHnXqAPsByszMZx/Y8oQBRJxJx5xg+RH3urzxA==}
+    peerDependencies:
+      react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
 
@@ -3858,7 +3867,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@ethersphere/bee-js@file:../../ethersphere/apiary-suite/bee-js':
+  '@ethersphere/bee-js@https://codeload.github.com/Apiary-Suite/bee-js/tar.gz/c76c13de3b5cbed76fa1d840fc0927ce4cdba0a0':
     dependencies:
       axios: 0.30.3(debug@4.4.3)
       cafe-utility: 33.8.0
@@ -6515,6 +6524,10 @@ snapshots:
   lru-cache@6.0.0:
     dependencies:
       yallist: 4.0.0
+
+  lucide-react@1.14.0(react@19.2.4):
+    dependencies:
+      react: 19.2.4
 
   magic-string@0.30.21:
     dependencies:

@@ -2,14 +2,15 @@ import { PrivateKey } from '@ethersphere/bee-js'
 import {
   createBroadcastChannelTransport,
   createSwarmFeedTransport,
+  createSwarmPubSubTransport,
   createSwarmRtcTransport,
-  createSwarmTransport,
   createWakuTransport,
   createYWebrtcTransport,
   DocSettings,
   PLACEHOLDER_STAMP,
 } from 'lib'
-import React, { useMemo, useState } from 'react'
+import { Copy, FileText, LogOut, RefreshCw, Settings, Users } from 'lucide-react'
+import React, { ReactNode, useCallback, useMemo, useState } from 'react'
 
 import { useSwarmDoc } from '../../hooks/useSwarmDoc'
 import {
@@ -70,11 +71,11 @@ export const SessionView: React.FC<SessionViewProps> = ({
 
   const docConfig: DocSettings = useMemo(() => {
     const getTransport = () => {
-      if (session.transport === Transport.BROADCAST) {
+      if (session.transport === Transport.BROADCAST_CHANNEL) {
         return createBroadcastChannelTransport()
       }
 
-      if (session.transport === Transport.SWARM) {
+      if (session.transport === Transport.SWARM_FEED_POLL) {
         return createSwarmFeedTransport(beeUrl, signer.toHex(), mutableStamp, topic)
       }
 
@@ -89,7 +90,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
       }
 
       if (session.transport === Transport.SWARM_PUBSUB) {
-        return createSwarmTransport(session.brokerPeer ?? '')
+        return createSwarmPubSubTransport(session.brokerPeer ?? '')
       }
 
       if (session.signalingUrl) {
@@ -150,29 +151,54 @@ export const SessionView: React.FC<SessionViewProps> = ({
     )
   }
 
+  const memberList = useCallback((): ReactNode | null => {
+    if (!members) return null
+
+    const block: ReactNode[] = []
+
+    for (const [addr, username] of members) {
+      block.push(
+        <span key={addr} className="session-view__member-chip">
+          <span className="session-view__member-dot" aria-hidden="true" />
+          <code className="session-view__member-code" title={addr}>
+            {username.length ? username : addr.slice(0, 8) + '…'}
+          </code>
+        </span>,
+      )
+    }
+
+    return block
+  }, [members])
+
   return (
     <div className="session-view">
       {/* Header */}
       <div className="session-view__header">
         <div className="session-view__header-row">
-          <strong>{session.username}</strong>
-          <code className="session-view__pubkey">{session.pubKey}</code>
+          <div className="session-view__logo" aria-hidden="true">
+            <FileText size={15} strokeWidth={2.25} />
+          </div>
+          <span className="session-view__username">{session.username}</span>
+          <code className="session-view__pubkey" title={session.pubKey}>
+            {session.pubKey.slice(0, 8)}
+          </code>
           <button
             className="session-view__btn"
             title="Copy address"
             onClick={() => navigator.clipboard.writeText(session.pubKey)}
           >
-            Copy address
+            <Copy size={13} />
+            Copy
           </button>
           <span className="session-view__transport-badge">{transportLabel}</span>
 
-          {members.length > 0 && (
+          {members && members.size > 0 && (
             <div className="session-view__members">
-              {members.map(m => (
-                <span key={m} className="session-view__member-chip">
-                  <code className="session-view__member-code">{m.slice(0, 8)}…</code>
-                </span>
-              ))}
+              <span className="session-view__members-label">
+                <Users size={12} />
+                {members.size}
+              </span>
+              {memberList()}
             </div>
           )}
 
@@ -181,7 +207,8 @@ export const SessionView: React.FC<SessionViewProps> = ({
             className="session-view__btn session-view__btn--refresh"
             title="Re-read member list"
           >
-            Refresh Members
+            <RefreshCw size={13} />
+            Refresh
           </button>
           <button
             onClick={() => {
@@ -191,12 +218,14 @@ export const SessionView: React.FC<SessionViewProps> = ({
               setConfigOpen(o => !o)
             }}
             className={`session-view__btn session-view__btn--config${configOpen ? ' session-view__btn--config-open' : ''}`}
-            style={members.length === 0 ? { marginLeft: 'auto' } : undefined}
+            style={members?.size === 0 ? { marginLeft: 'auto' } : undefined}
             title="Bee node settings"
           >
-            ⚙ Bee
+            <Settings size={13} />
+            Bee
           </button>
-          <button onClick={onLogout} className="session-view__btn session-view__btn--logout">
+          <button onClick={onLogout} className="session-view__btn session-view__btn--logout" title="Logout">
+            <LogOut size={13} />
             Logout
           </button>
         </div>

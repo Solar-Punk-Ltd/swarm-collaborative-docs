@@ -7,12 +7,6 @@ import { ErrorHandler } from '../utils/error'
 
 const TAG = 'SwarmSignal'
 
-function isServerError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-
-  return error.message?.includes('500') || false
-}
-
 /**
  * Reads and writes WebRTC signaling records to a per-user Swarm mutable feed.
  *
@@ -60,7 +54,7 @@ export class SwarmSignal {
 
       return JSON.parse(result.payload.toUtf8()) as SignalFeedPayload
     } catch (err) {
-      if (!isNotFoundError(err) && !isServerError(err)) {
+      if (!isNotFoundError(err)) {
         this.errorHandler.handleError(err, `${TAG}.read(${peerAddress.slice(0, 8)}…)`)
       }
 
@@ -75,6 +69,7 @@ export class SwarmSignal {
    * Deduplication key: type + toAddress — only one active offer/answer per peer.
    * Enqueued so it never runs concurrently with clearOwn.
    */
+  // eslint-disable-next-line require-await
   async writeRecord(record: SignalRecord): Promise<void> {
     console.log(
       `${TAG} writeRecord called — type=${record.type} to=${record.toAddress.slice(0, 8)}… sessionId=${record.sessionId.slice(0, 8)} ts=${record.timestamp}`,
@@ -92,6 +87,7 @@ export class SwarmSignal {
 
   /** Writes an empty payload to own feed, removing all stale records from the previous session.
    *  Enqueued so it never runs concurrently with writeRecord. */
+  // eslint-disable-next-line require-await
   async clearOwn(): Promise<void> {
     console.log(`${TAG} clearOwn: starting`)
     this.writeQueue = this.writeQueue.then(async () => {
@@ -117,7 +113,7 @@ export class SwarmSignal {
 
       return JSON.parse(result.payload.toUtf8()) as SignalFeedPayload
     } catch (err) {
-      if (!isNotFoundError(err) && !isServerError(err)) {
+      if (!isNotFoundError(err)) {
         this.errorHandler.handleError(err, `${TAG}.readOwn`)
       }
 

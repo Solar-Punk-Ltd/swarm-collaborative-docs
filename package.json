@@ -33,9 +33,10 @@
     "init:husky": "pnpm husky install"
   },
   "dependencies": {
-    "@ethersphere/bee-js": "file:/Users/ujvaribalint/repos/ethersphere/apiary-suite/bee-js/",
+    "@ethersphere/bee-js": "github:Apiary-Suite/bee-js",
     "@solarpunkltd/comment-system": "^1.9.2",
     "@waku/sdk": "^0.0.36",
+    "lucide-react": "^1.8.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "y-webrtc": "^10.3.0",
@@ -75,6 +76,7 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
+      "@ethersphere/bee-js",
       "@parcel/watcher",
       "unrs-resolver"
     ]

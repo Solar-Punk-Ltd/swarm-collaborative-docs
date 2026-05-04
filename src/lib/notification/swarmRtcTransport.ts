@@ -267,16 +267,18 @@ class SwarmRtcTransport implements DocTransport {
     this.signalCheckInFlight = true
     const peers = this.deps.members.all()
 
-    if (peers.length === 0) {
+    if (peers.size === 0) {
       this.signalCheckInFlight = false
 
       return
     }
 
-    console.log(`${TAG} checking signals for ${peers.length} peer(s): ${peers.map(a => a.slice(0, 8)).join(', ')}`)
+    const peerAddrs = Array.from(peers.keys())
+
+    console.log(`${TAG} checking signals for ${peers.size} peer(s): ${peerAddrs.map(a => a.slice(0, 8)).join(', ')}`)
 
     try {
-      await Promise.allSettled(peers.map(addr => this.checkPeerSignals(addr)))
+      await Promise.allSettled(peerAddrs.map(addr => this.checkPeerSignals(addr)))
     } finally {
       this.signalCheckInFlight = false
     }

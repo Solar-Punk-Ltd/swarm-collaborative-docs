@@ -47,7 +47,7 @@ npm install @solarpunkltd/swarm-collaborative-docs
 The primary class. Manages a Yjs document backed by Swarm and a pluggable transport.
 
 ```typescript
-import { SwarmDoc, DocSettings, DOC_EVENTS, createSwarmFeedTransport } from '@solarpunkltd/swarm-collaborative-docs'
+import { SwarmDoc, DocSettings, DOC_EVENTS, createSwarmPubSubTransport } from '@solarpunkltd/swarm-collaborative-docs'
 
 const settings: DocSettings = {
   user: {
@@ -57,23 +57,23 @@ const settings: DocSettings = {
   infra: {
     beeUrl: 'http://localhost:1633',
     mutableStamp: 'your-mutable-batch-id',
-    topic: 'my-room',
-    transport: createSwarmFeedTransport(beeUrl, privateKey, mutableStamp, 'my-room'),
+    topic: 'my-document-id',
+    transport: createSwarmPubSubTransport('/ip4/1.2.3.4/tcp/1634/p2p/QmXxxx…'),
   },
 }
 
 const swarmDoc = new SwarmDoc(settings)
 
-swarmDoc.getEmitter().on(DOC_EVENTS.DOC_UPDATED, doc => {
+swarmDoc.getEmitter().on(DOC_EVENTS.DOC_UPDATED, (doc: Y.Doc) => {
   /* re-render */
 })
-swarmDoc.getEmitter().on(DOC_EVENTS.MEMBERS_UPDATED, members => {
-  /* update peer list */
+swarmDoc.getEmitter().on(DOC_EVENTS.MEMBERS_UPDATED, (members: Map<string, string>) => {
+  /* update peer list — Map<ethereumAddress, username> */
 })
 swarmDoc.getEmitter().on(DOC_EVENTS.PEERS_CONNECTED, () => {
   /* enable editor */
 })
-swarmDoc.getEmitter().on(DOC_EVENTS.DOC_ERROR, err => {
+swarmDoc.getEmitter().on(DOC_EVENTS.DOC_ERROR, (err: Error) => {
   /* show error */
 })
 
@@ -107,8 +107,8 @@ interface DocSettings {
   infra: {
     beeUrl: string // e.g. "http://localhost:1633"
     mutableStamp?: string // mutable batch (immutableFlag=false) for all Swarm writes
-    topic: string // shared room identifier
-    members?: string[] // pre-seeded peer addresses
+    topic: string // shared document identifier (UUID recommended)
+    members?: Map<string, string> // pre-seeded peers: Map<ethereumAddress, username>
     transport: DocTransportFactory
   }
 }
@@ -119,12 +119,12 @@ consensus member list.
 
 ### `DOC_EVENTS`
 
-| Event                        | Payload    | When                                      |
-| ---------------------------- | ---------- | ----------------------------------------- |
-| `DOC_EVENTS.DOC_UPDATED`     | `Y.Doc`    | After every remote update is applied      |
-| `DOC_EVENTS.DOC_ERROR`       | `Error`    | Stamp validation failure or publish error |
-| `DOC_EVENTS.MEMBERS_UPDATED` | `string[]` | Peer list changes                         |
-| `DOC_EVENTS.PEERS_CONNECTED` | `true`     | Transport has at least one connected peer |
+| Event                        | Payload               | When                                      |
+| ---------------------------- | --------------------- | ----------------------------------------- |
+| `DOC_EVENTS.DOC_UPDATED`     | `Y.Doc`               | After every remote update is applied      |
+| `DOC_EVENTS.DOC_ERROR`       | `Error`               | Stamp validation failure or publish error |
+| `DOC_EVENTS.MEMBERS_UPDATED` | `Map<string, string>` | Peer list changes (address → username)    |
+| `DOC_EVENTS.PEERS_CONNECTED` | `true`                | Transport has at least one connected peer |
 
 ---
 
@@ -132,12 +132,38 @@ consensus member list.
 
 Each transport implements `DocTransport` and is passed to `DocSettings.infra.transport` as a factory function.
 
+### `createSwarmPubSubTransport`
+
+**Best for**: low-latency real-time notifications over Swarm with no external signaling server.
+
+Uses Swarm's GSOC ephemeral pubsub (via the Bee node WebSocket endpoint). All peers subscribed to the same document ID
+connect to the same GSOC address — derived deterministically from the `docFeedId` using `PubsubMode.GSOC_EPHEMERAL`
+(keccak256 hash → ephemeral key → SOC address). Publish calls are buffered while the WebSocket is connecting and drained
+as soon as the connection opens. If the WebSocket closes unexpectedly, the transport reconnects automatically after 10
+seconds.
+
+Peer discovery does **not** happen at the transport level — new peers become visible via the consensus Swarm feed or
+through incoming JOIN notifications.
+
+```typescript
+import { createSwarmPubSubTransport } from '@solarpunkltd/swarm-collaborative-docs'
+
+transport: createSwarmPubSubTransport('/ip4/1.2.3.4/tcp/1634/p2p/QmXxxx…')
+```
+
+The sole argument is the multiaddress of a Bee node that acts as the GSOC broker/relay.
+
+**Delivery model**: bidirectional WebSocket push over the Swarm GSOC pubsub channel. Messages are ephemeral — offline
+peers rely on Swarm snapshot reads for recovery. Low latency: ~100ms.
+
+---
+
 ### `createSwarmFeedTransport`
 
-**Best for**: reliable delivery, offline peers, production use without a signaling server.
+**Best for**: reliable delivery to offline peers; production use without any external server.
 
-Polls each peer's `<topic>_notify<address>` Swarm feed at 1.5s intervals (backs off to 5s when idle). Writes outgoing
-payloads to own notification feed.
+Polls each peer's `<topic>_notify<address>` Swarm feed at 1.5 s intervals (backs off to 5 s when idle). Writes outgoing
+payloads to the local user's own notification feed.
 
 ```typescript
 import { createSwarmFeedTransport } from '@solarpunkltd/swarm-collaborative-docs'
@@ -146,18 +172,18 @@ transport: createSwarmFeedTransport(beeUrl, privateKey, mutableStamp, topic)
 ```
 
 **Delivery model**: store-and-forward over Swarm feeds. Messages persist for offline peers and are delivered on next
-poll. Latency ~1.5–5s.
+poll. Latency ~1.5–5 s.
 
 ---
 
 ### `createYWebrtcTransport`
 
-**Best for**: low-latency sync in controlled environments with an available signaling server.
+**Best for**: low-latency sync in controlled environments with an available WebSocket signaling server.
 
 Uses the [y-webrtc](https://github.com/yjs/y-webrtc) library. Peers are discovered via the `awareness` protocol through
-a WebSocket signaling server. Y.js state is synchronised over WebRTC data channels. Cross-tab sync within the same
-origin is handled automatically by y-webrtc's built-in BroadcastChannel — no separate `createBroadcastChannelTransport`
-is needed.
+a WebSocket signaling server. Yjs state is synchronised over WebRTC data channels. Cross-tab sync within the same origin
+is handled automatically by y-webrtc's built-in BroadcastChannel — no separate `createBroadcastChannelTransport` is
+needed.
 
 ```typescript
 import { createYWebrtcTransport } from '@solarpunkltd/swarm-collaborative-docs'
@@ -176,8 +202,8 @@ over data channels. Swarm snapshot reads still provide fallback for offline hist
 
 SDP offer/answer records are written to and read from each peer's `<topic>_signal` Swarm mutable feed, replacing the
 traditional signaling server. ICE gathering runs to completion before the SDP is uploaded. Role assignment is
-deterministic (lower address = initiator) to avoid duplicate connections. On ICE failure, the initiator retries after
-10s.
+deterministic (lower address = initiator) to avoid duplicate connections. On ICE failure, the initiator retries after 10
+s.
 
 ```typescript
 import { createSwarmRtcTransport } from '@solarpunkltd/swarm-collaborative-docs'
@@ -208,7 +234,7 @@ transport: createWakuTransport()
 transport: createWakuTransport(['/ip4/...'])
 ```
 
-**Delivery model**: gossipsub pub/sub over Waku network. Near-real-time delivery for online peers. Messages are
+**Delivery model**: gossipsub pub/sub over the Waku network. Near-real-time delivery for online peers. Messages are
 ephemeral — offline peers rely on Swarm snapshot reads for recovery.
 
 ---
@@ -242,60 +268,65 @@ const { doc, error, members, connected, refreshMemberList, dismissError } = useS
 })
 ```
 
-| Returned value        | Type            | Description                                 |
-| --------------------- | --------------- | ------------------------------------------- |
-| `doc`                 | `Y.Doc \| null` | The Yjs document (null before init)         |
-| `error`               | `Error \| null` | Latest error, or null                       |
-| `members`             | `string[]`      | Current peer addresses                      |
-| `connected`           | `boolean`       | Whether the transport has at least one peer |
-| `refreshMemberList()` | `() => void`    | Triggers an immediate member list refresh   |
-| `dismissError()`      | `() => void`    | Clears the current error                    |
+| Returned value        | Type                          | Description                                 |
+| --------------------- | ----------------------------- | ------------------------------------------- |
+| `doc`                 | `Y.Doc \| null`               | The Yjs document (null before init)         |
+| `error`               | `Error \| null`               | Latest error, or null                       |
+| `members`             | `Map<string, string> \| null` | Connected peers: address → username         |
+| `connected`           | `boolean`                     | Whether the transport has at least one peer |
+| `refreshMemberList()` | `() => void`                  | Triggers an immediate member list refresh   |
+| `dismissError()`      | `() => void`                  | Clears the current error                    |
 
 ---
 
 ## Example app (`src/app`)
 
-A minimal test application demonstrating all transport options with a shared plain-text editor.
+A minimal test application demonstrating all transport options with a shared text editor.
 
 ### Running locally
 
 ```bash
 pnpm install
-npm run start
+pnpm start
 ```
 
 The app runs at `http://localhost:5002`.
 
 ### Login screen
 
-Configure before joining a session:
+Enter a username, then configure:
 
-- **Bee URL** — your local Bee node API (e.g. `http://localhost:1633`)
-- **Topic** — shared room name; all peers must use the same value
-- **Mutable stamp** — postage batch for all Swarm writes
-- **Transport selection**:
-  - _Swarm_ — SwarmFeed polling (offline-tolerant, no extra server)
-  - _y-webrtc_ — WebRTC via a WebSocket signaling URL
-  - _Swarm WebRTC_ — WebRTC with Swarm-based SDP signaling (STUN URL required)
-  - _Waku_ — Waku gossipsub network (optional bootstrap peer address)
-- **Disable until connected** — prevents editing before the transport has a live peer
+- **Document ID** — UUID that identifies the shared document; auto-generated and persisted in `localStorage`. Paste an
+  invite link to pre-fill this field.
+  - **Invite** button — copies a shareable link (`?doc=<id>&trans=<transport>`) to the clipboard.
+  - **Generate new ID** — creates a fresh UUID and saves it.
+- **Transport tabs** — select the active notification transport:
+  - _Swarm PubSub_ — GSOC ephemeral pubsub (requires a Bee broker peer, see Advanced Settings)
+  - _Waku_ — Waku gossipsub (no Bee node required)
+  - _WebRTC_ — y-webrtc via a signaling server or Swarm-based SDP signaling (see Advanced Settings)
+- **Advanced Settings** (collapsible):
+  - Bee API URL
+  - `MUTABLE_STAMP` postage batch ID
+  - Disable editing until a peer is connected (WebRTC / Waku only)
+  - Broker Peer multiaddress (Swarm PubSub only)
+  - Signaling Server URL or Swarm Signaling STUN URL (WebRTC only)
 
 ### Session screen
 
-- Shared textarea bound to a Yjs `Text` type
-- Peer list showing connected Ethereum addresses (short display + copy on click)
-- Config panel for live mutable stamp and topic changes without re-login
+- Shared editor bound to a Yjs `Text` type
+- Peer list showing connected members with their usernames (hover for full address, click to copy)
 - Transport badge showing the active transport
 
 ## Transport comparison
 
-|                   | SwarmFeed | y-webrtc | SwarmRtc |  Waku  | BroadcastChannel |
-| ----------------- | :-------: | :------: | :------: | :----: | :--------------: |
-| Latency           |  ~1.5–5s  |  ~100ms  |  ~100ms  | ~100ms |       ~0ms       |
-| Offline delivery  |     ✓     |    ✗     |    ✗     |   ✗    |        ✗         |
-| No central server |     ✓     |    ✗     |    ✓     |   ✓    |        ✓         |
-| Requires Bee node |     ✓     |    ✗     |    ✓     |   ✗    |        ✗         |
-| Cross-device      |     ✓     |    ✓     |    ✓     |   ✓    |        ✗         |
+|                      | SwarmPubSub | SwarmFeed | y-webrtc | SwarmRtc |  Waku  | BroadcastChannel |
+| -------------------- | :---------: | :-------: | :------: | :------: | :----: | :--------------: |
+| Latency              |   ~100ms    |  ~1.5–5s  |  ~100ms  |  ~100ms  | ~100ms |       ~0ms       |
+| Offline delivery     |      ✗      |     ✓     |    ✗     |    ✗     |   ✗    |        ✗         |
+| No external server   |      ✓      |     ✓     |    ✗     |    ✓     |   ✓    |        ✓         |
+| Requires Bee node    |      ✓      |     ✓     |    ✗     |    ✓     |   ✗    |        ✗         |
+| Requires broker peer |      ✓      |     ✗     |    ✗     |    ✗     |   ✗    |        ✗         |
+| Cross-device         |      ✓      |     ✓     |    ✓     |    ✓     |   ✓    |        ✗         |
 
 All transports fall back to Swarm snapshot reads for document history recovery regardless of notification delivery
 guarantees.

@@ -6,14 +6,16 @@ import type { NotificationHandler, NotificationPayload } from '../interfaces/not
 import { ErrorHandler } from '../utils/error'
 
 const TAG = 'SwarmNotifTransport'
+const WS_RECONNECT_TIMEOUT_MS = 10_000
 
-class SwarmDocTransport implements DocTransport {
+class SwarmPubSubDocTransport implements DocTransport {
   private errorHandler = ErrorHandler.getInstance()
   private subscription: PubsubSubscription | null = null
   private stopped = false
+  private isConnecting = false
+  private isConnected = false
 
-  // Buffered until the WebSocket is open
-  private pendingHandler: { topic: string; handler: NotificationHandler } | null = null
+  private handler: NotificationHandler | null = null
   private pendingPublishes: NotificationPayload[] = []
 
   constructor(
@@ -22,32 +24,30 @@ class SwarmDocTransport implements DocTransport {
   ) {}
 
   start(): void {
+    this.stopped = false
     this.connect()
   }
 
   stop(): void {
     this.stopped = true
+    this.isConnecting = false
+    this.isConnected = false
     this.subscription?.cancel()
     this.subscription = null
   }
 
   subscribe(_topic: string, handler: NotificationHandler): void {
-    if (this.subscription) {
-      this.attachHandler(handler)
-    } else {
-      this.pendingHandler = { topic: _topic, handler }
-    }
+    this.handler = handler
   }
 
   publish(payload: NotificationPayload): void {
-    if (this.subscription) {
+    if (this.isConnected) {
       this.sendPayload(payload).catch(err => this.errorHandler.handleError(err, `${TAG}.sendPayload`))
     } else {
       this.pendingPublishes.push(payload)
     }
   }
 
-  // Channel-based: no per-peer connection needed
   connectToPeer(_address: string): void {}
 
   isRemoteOrigin(_origin: unknown): boolean {
@@ -55,20 +55,34 @@ class SwarmDocTransport implements DocTransport {
   }
 
   private connect(): void {
-    if (this.stopped) return
+    if (this.stopped || this.isConnecting) return
+
+    this.isConnecting = true
 
     const bee = new Bee(this.deps.beeApiUrl)
 
     const subscription = bee.pubsubConnect(
       PubsubMode.GSOC_EPHEMERAL,
       {
+        onOpen: _sub => {
+          this.isConnecting = false
+          this.isConnected = true
+          this.deps.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
+          console.log(`${TAG} connected, topicAddress derived from docFeedId=${this.deps.docFeedId}`)
+
+          // Drain buffered publishes now that the WebSocket is open
+          const toSend = this.pendingPublishes.splice(0)
+          for (const payload of toSend) {
+            this.sendPayload(payload).catch(err => this.errorHandler.handleError(err, `${TAG}.sendPayload`))
+          }
+        },
         onMessage: (message, _sub) => {
-          if (!this.pendingHandler) return
+          if (!this.handler) return
 
           try {
             const text = new TextDecoder().decode(message.toUint8Array())
             const payload = JSON.parse(text) as NotificationPayload
-            this.pendingHandler.handler(payload)
+            this.handler(payload)
           } catch (err) {
             this.errorHandler.handleError(err, `${TAG}.onMessage`)
           }
@@ -76,13 +90,17 @@ class SwarmDocTransport implements DocTransport {
         onError: (err, _sub) => {
           if (!this.stopped) {
             this.errorHandler.handleError(err, `${TAG}.onError`)
+            this.isConnecting = false
+            this.isConnected = false
           }
         },
         onClose: _sub => {
           if (!this.stopped) {
             console.warn(`${TAG} connection closed, reconnecting…`)
             this.subscription = null
-            setTimeout(() => this.connect(), 3_000)
+            this.isConnecting = false
+            this.isConnected = false
+            setTimeout(() => this.connect(), WS_RECONNECT_TIMEOUT_MS)
           }
         },
       },
@@ -91,26 +109,6 @@ class SwarmDocTransport implements DocTransport {
     )
 
     this.subscription = subscription
-
-    // Drain buffered handler and publishes
-    if (this.pendingHandler) {
-      const { handler } = this.pendingHandler
-      this.attachHandler(handler)
-    }
-
-    for (const payload of this.pendingPublishes) {
-      this.sendPayload(payload).catch(err => this.errorHandler.handleError(err, `${TAG}.sendPayload`))
-    }
-
-    this.pendingPublishes = []
-
-    this.deps.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
-    console.log(`${TAG} connected, topicAddress derived from docFeedId=${this.deps.docFeedId}`)
-  }
-
-  private attachHandler(handler: NotificationHandler): void {
-    // Store the active handler reference so onMessage can call it
-    this.pendingHandler = { topic: '', handler }
   }
 
   private async sendPayload(payload: NotificationPayload): Promise<void> {
@@ -137,6 +135,6 @@ class SwarmDocTransport implements DocTransport {
  * @param brokerPeer Multiaddress of the Bee node acting as the GSOC pubsub broker.
  *   Example: `/ip4/1.2.3.4/tcp/1634/p2p/QmXxxx…`
  */
-export function createSwarmTransport(brokerPeer: string): DocTransportFactory {
-  return (deps: DocTransportDeps) => new SwarmDocTransport(deps, brokerPeer)
+export function createSwarmPubSubTransport(brokerPeer: string): DocTransportFactory {
+  return (deps: DocTransportDeps) => new SwarmPubSubDocTransport(deps, brokerPeer)
 }

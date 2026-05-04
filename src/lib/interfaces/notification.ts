@@ -6,6 +6,8 @@ export interface NotificationPayload {
   topic: string
   /** Ethereum address of the publishing peer (hex, no 0x prefix). */
   author: string
+  /** Nickname of the publishing peer  */
+  username: string
   /**
    * Swarm doc-feed index written by the author.
    * Set to `JOIN_FEED_INDEX` (-1) to signal a peer join event (no doc update).

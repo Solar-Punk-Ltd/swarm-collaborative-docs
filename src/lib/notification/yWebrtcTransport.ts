@@ -38,7 +38,8 @@ class YWebrtcTransport implements DocTransport {
 
         if (!isSelf && address && address !== this.deps.ownAddress && !this.deps.members.has(address)) {
           console.log(`${TAG} awareness: new peer ${address.slice(0, 8)}…`)
-          this.deps.onPeerDiscovered(address)
+          // TODO: use username
+          this.deps.onPeerDiscovered(address, 'unknown')
         }
       }
     })
