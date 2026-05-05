@@ -45,7 +45,7 @@ export interface DocTransportDeps {
   /** Read-only accessor for the current peer set and per-peer feed index state. */
   members: {
     /** Returns all registered peer addresses. */
-    all(): string[]
+    all(): ReadonlyMap<string, string>
     /** Returns `true` if `address` is in the registered set. */
     has(address: string): boolean
     /** Returns the last Swarm feed index applied from `address`, or `-1n` if none. */
@@ -61,7 +61,7 @@ export interface DocTransportDeps {
    * Called when the transport discovers a peer not yet in the member set.
    * The transport should invoke this on awareness events or similar peer-discovery signals.
    */
-  onPeerDiscovered: (address: string) => void
+  onPeerDiscovered: (address: string, username: string) => void
   /** Topic namespace used to derive per-user Swarm feed identifiers. Swarm transports only. */
   docFeedId: string
   /** Bee node HTTP API URL. Swarm transports only. */

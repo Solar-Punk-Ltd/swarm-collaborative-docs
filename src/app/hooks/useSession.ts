@@ -1,7 +1,8 @@
 import { getSigner, uuidV4 } from 'lib'
 import { useState } from 'react'
 
-import { SESSION_KEY } from '../utils/constants'
+import { SESSION_KEY, TRANSPORT_KEY, USERNAME_KEY } from '../utils/constants'
+import { loadSession } from '../utils/localStorage'
 import { Session, Transport } from '../utils/types'
 
 function createSession(
@@ -11,6 +12,7 @@ function createSession(
   signalingUrl?: string,
   stunUrl?: string,
   wakuAddress?: string,
+  brokerPeer?: string,
 ): Session {
   const existing = loadSession()
 
@@ -24,6 +26,7 @@ function createSession(
       signalingUrl,
       stunUrl,
       wakuAddress,
+      brokerPeer,
     }
   }
 
@@ -38,16 +41,7 @@ function createSession(
     signalingUrl,
     stunUrl,
     wakuAddress,
-  }
-}
-
-function loadSession(): Session | null {
-  try {
-    const raw = localStorage.getItem(SESSION_KEY)
-
-    return raw ? (JSON.parse(raw) as Session) : null
-  } catch {
-    return null
+    brokerPeer,
   }
 }
 
@@ -61,9 +55,12 @@ export function useSession() {
     signalingUrl?: string,
     stunUrl?: string,
     wakuAddress?: string,
+    brokerPeer?: string,
   ) => {
-    const s = createSession(username, transport, topic, signalingUrl, stunUrl, wakuAddress)
+    const s = createSession(username, transport, topic, signalingUrl, stunUrl, wakuAddress, brokerPeer)
     localStorage.setItem(SESSION_KEY, JSON.stringify(s))
+    localStorage.setItem(TRANSPORT_KEY, transport)
+    localStorage.setItem(USERNAME_KEY, username)
     setSession(s)
   }
 

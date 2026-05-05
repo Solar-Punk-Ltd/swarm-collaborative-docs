@@ -22,8 +22,8 @@ export interface DocSettings {
     mutableStamp?: string
     /** Shared room identifier. All peers in the same room must use the same `topic`. */
     topic: string
-    /** Pre-seeded peer Ethereum addresses. Merged with the Swarm consensus member list at init. */
-    members?: string[]
+    /** Pre-seeded peer Ethereum addresses with usernames. Merged with the Swarm consensus member list at init. */
+    members?: Map<string, string>
     /**
      * Transport factory. Determines how peers exchange notifications and/or sync state.
      * Use one of the built-in factories:

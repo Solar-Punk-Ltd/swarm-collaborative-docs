@@ -99,6 +99,8 @@ export default defineConfig([
         TextEncoder: 'readonly',
         TextDecoder: 'readonly',
         CustomEvent: 'readonly',
+        URLSearchParams: 'readonly',
+        window: 'readonly',
       },
     },
   },

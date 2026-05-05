@@ -1,21 +1,36 @@
-import { PLACEHOLDER_STAMP, validateStamps } from 'lib'
-import React, { useState } from 'react'
+import { PLACEHOLDER_STAMP, uuidV4, validateStamps } from 'lib'
+import { AlertCircle, AlertTriangle, FileText, LogIn } from 'lucide-react'
+import React, { useCallback, useState } from 'react'
 
 import {
   BEE_URL_KEY,
+  BROKER_PEER_KEY,
   DEFAULT_BEE_API_URL,
   DEFAULT_ICE_SERVER_URL,
   DEFAULT_SIGNALING_SERVER_URL,
   DEFAULT_TOPIC,
   MUTABLE_STAMP_KEY,
+  SESSION_KEY,
   SIGNALING_URL_KEY,
   STUN_URL_KEY,
   TOPIC_KEY,
+  TRANSPORT_KEY,
 } from '../../utils/constants'
-import { loadStunUrl } from '../../utils/localStorage'
+import { loadBrokerPeer, loadSession, loadStunUrl, loadTransport } from '../../utils/localStorage'
 import { Transport, TRANSPORT_LABELS, WebrtcMode } from '../../utils/types'
 
 import './LoginView.scss'
+
+const BUTTON_TIMEOUT_MS = 1500
+
+const origin = typeof window !== 'undefined' ? window.location.origin : ''
+
+const buildInviteLink = (docId: string, transport: string) => {
+  const m = typeof window !== 'undefined' ? window.location.pathname.match(/^\/bzz\/([^/]+)/) : null
+  const base = m && m[1] ? `${origin}/bzz/${m[1]}/` : `${origin}/`
+
+  return `${base}?doc=${encodeURIComponent(docId)}&trans=${transport}`
+}
 
 interface LoginViewProps {
   username?: string
@@ -34,8 +49,11 @@ interface LoginViewProps {
     signalingUrl?: string,
     stunUrl?: string,
     wakuAddress?: string,
+    brokerPeer?: string,
   ) => void
 }
+
+const Transports = [Transport.SWARM_PUBSUB, Transport.WAKU, Transport.WEBRTC] as const
 
 export const LoginView: React.FC<LoginViewProps> = ({
   username,
@@ -50,13 +68,51 @@ export const LoginView: React.FC<LoginViewProps> = ({
   onLogin,
 }) => {
   const [inputName, setInputName] = useState(username ?? '')
-  const [transport, setTransport] = useState<Transport>(Transport.WEBRTC)
-  const [serverUrl, setServerUrl] = useState(loadStunUrl() || DEFAULT_ICE_SERVER_URL)
-  const [webrtcMode, setWebrtcMode] = useState<WebrtcMode>(loadStunUrl() ? WebrtcMode.SWARM : WebrtcMode.SIGNALING)
+  const [transport, setTransport] = useState<Transport>(loadTransport())
+  const [serverUrl, setServerUrl] = useState(loadStunUrl())
+  const [webrtcMode, setWebrtcMode] = useState<WebrtcMode>(
+    loadStunUrl() ? WebrtcMode.SWARM_SIGNAL_FEED : WebrtcMode.SIGNALING_SERVER,
+  )
+  const [brokerPeer, setBrokerPeer] = useState(loadBrokerPeer())
   const [validating, setValidating] = useState(false)
   const [pageError, setPageError] = useState<string | null>(null)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [newDocIdGenerated, setNewDocIdGenerated] = useState(false)
 
-  const submit = async () => {
+  const handleTransportChange = (t: Transport) => {
+    setTransport(t)
+    localStorage.setItem(TRANSPORT_KEY, t)
+  }
+
+  const handleCopyInvite = useCallback(async () => {
+    try {
+      const link = buildInviteLink(topic, transport)
+      await navigator.clipboard.writeText(link)
+      setCopied(true)
+      setTimeout(() => setCopied(false), BUTTON_TIMEOUT_MS)
+    } catch {
+      // ignore
+    }
+  }, [topic, transport])
+
+  const handleGenerateNewDocId = useCallback(() => {
+    const newDocId = uuidV4()
+    onTopicChange(newDocId)
+    setNewDocIdGenerated(true)
+
+    localStorage.setItem(TOPIC_KEY, newDocId)
+    const existingSession = loadSession()
+
+    if (existingSession) {
+      existingSession.topic = newDocId
+      localStorage.setItem(SESSION_KEY, JSON.stringify(existingSession))
+    }
+
+    setTimeout(() => setNewDocIdGenerated(false), BUTTON_TIMEOUT_MS)
+  }, [onTopicChange])
+
+  const submit = useCallback(async () => {
     const name = inputName.trim()
 
     if (!name) return
@@ -64,6 +120,15 @@ export const LoginView: React.FC<LoginViewProps> = ({
     if (transport === Transport.WEBRTC) {
       if (!serverUrl) {
         setPageError('Either STUN or Signaling server URL must be set!')
+        setValidating(false)
+
+        return
+      }
+    }
+
+    if (transport === Transport.SWARM_PUBSUB) {
+      if (!brokerPeer.trim()) {
+        setPageError('Broker peer multiaddress is required for Swarm Pubsub!')
         setValidating(false)
 
         return
@@ -87,7 +152,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
     let signalingUrl: string | undefined = undefined
     let stunUrl: string | undefined = undefined
 
-    if (webrtcMode === WebrtcMode.SIGNALING) {
+    if (webrtcMode === WebrtcMode.SIGNALING_SERVER) {
       signalingUrl = serverUrl
       localStorage.setItem(STUN_URL_KEY, '')
     } else {
@@ -95,121 +160,199 @@ export const LoginView: React.FC<LoginViewProps> = ({
       localStorage.setItem(SIGNALING_URL_KEY, '')
     }
 
-    onLogin(name, transport, topic, signalingUrl, stunUrl)
-  }
+    const peer = brokerPeer.trim() || undefined
+
+    onLogin(name, transport, topic, signalingUrl, stunUrl, undefined, peer)
+  }, [inputName, transport, topic, webrtcMode, brokerPeer, beeUrl, mutableStamp, onLogin, serverUrl])
 
   return (
     <div className="login-view">
-      <h2 className="login-view__title">Swarm Collab Doc</h2>
-      <input
-        value={inputName}
-        onChange={e => setInputName(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && submit()}
-        placeholder={username ?? 'Enter username'}
-        className="login-view__input"
-        autoFocus
-      />
-      <div className="login-view__tab-bar">
-        {([Transport.SWARM, Transport.BROADCAST, Transport.WEBRTC, Transport.WAKU] as const).map(t => (
-          <button
-            key={t}
-            onClick={() => setTransport(t)}
-            className={`login-view__tab-btn${transport === t ? ' login-view__tab-btn--active' : ''}`}
-          >
-            {TRANSPORT_LABELS[t]}
-          </button>
-        ))}
-      </div>
-      {transport === Transport.WEBRTC && (
-        <div className="login-view__webrtc">
+      <div className="login-view__container">
+        <div className="login-view__brand">
+          <div className="login-view__logo" aria-hidden="true">
+            <FileText size={24} strokeWidth={2.25} />
+          </div>
+          <h1 className="login-view__title">Swarm Collab Doc</h1>
+          <p className="login-view__subtitle">Real-time collaborative docs over Swarm</p>
+        </div>
+
+        <div className="login-view__card">
+          <input
+            value={inputName}
+            onChange={e => setInputName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && submit()}
+            placeholder={username ?? 'Enter username'}
+            className="login-view__input"
+            autoFocus
+          />
+
+          <div className="login-view__doc-id-row">
+            <div style={{ flex: 1 }}>
+              <label className="login-view__field-label">Document ID</label>
+              <input
+                value={topic}
+                onChange={e => onTopicChange(e.target.value)}
+                onBlur={() => localStorage.setItem(TOPIC_KEY, topic)}
+                placeholder={DEFAULT_TOPIC}
+                className={`login-view__field-input login-view__field-input--mono`}
+              />
+            </div>
+          </div>
+
+          <div style={{ marginLeft: 8 }}>
+            <button
+              className={`login-view__invite-btn${copied ? ' login-view__invite-btn--copied' : ''}`}
+              onClick={handleCopyInvite}
+              title="Copy invite link"
+            >
+              {copied ? 'Copied' : 'Invite'}
+            </button>
+            <button
+              className={`login-view__new-id-btn${newDocIdGenerated ? ' login-view__new-id-btn--clicked' : ''}`}
+              onClick={handleGenerateNewDocId}
+              title="Generate new ID"
+            >
+              {'Generate new ID'}
+            </button>
+          </div>
+
           <div className="login-view__tab-bar">
-            {([WebrtcMode.SIGNALING, WebrtcMode.SWARM] as const).map(mode => (
+            {Transports.map(t => (
               <button
-                key={mode}
-                onClick={() => {
-                  setWebrtcMode(mode)
-                  const itemKey = mode === WebrtcMode.SIGNALING ? SIGNALING_URL_KEY : STUN_URL_KEY
-                  localStorage.setItem(itemKey, '')
-                }}
-                className={`login-view__tab-btn${webrtcMode === mode ? ' login-view__tab-btn--active' : ''}`}
+                key={t}
+                onClick={() => handleTransportChange(t)}
+                className={`login-view__tab-btn${transport === t ? ' login-view__tab-btn--active' : ''}`}
               >
-                {mode === WebrtcMode.SIGNALING ? 'Signaling Server URL' : 'Swarm Signaling STUN URL '}
+                {TRANSPORT_LABELS[t]}
               </button>
             ))}
           </div>
-          {
-            <input
-              value={serverUrl}
-              onChange={e => setServerUrl(e.target.value)}
-              onBlur={() =>
-                localStorage.setItem(webrtcMode === WebrtcMode.SIGNALING ? SIGNALING_URL_KEY : STUN_URL_KEY, serverUrl)
-              }
-              placeholder={webrtcMode === WebrtcMode.SIGNALING ? DEFAULT_SIGNALING_SERVER_URL : DEFAULT_ICE_SERVER_URL}
-              className="login-view__url-input"
-            />
-          }
-        </div>
-      )}
-      {(
-        [
-          {
-            key: BEE_URL_KEY,
-            label: 'Bee API URL',
-            value: beeUrl,
-            onChange: onBeeUrlChange,
-            placeholder: DEFAULT_BEE_API_URL,
-            mono: false,
-          },
-          {
-            key: MUTABLE_STAMP_KEY,
-            label: 'MUTABLE_STAMP',
-            value: mutableStamp,
-            onChange: onMutableStampChange,
-            placeholder: PLACEHOLDER_STAMP,
-            mono: true,
-          },
-          {
-            key: TOPIC_KEY,
-            label: 'TOPIC',
-            value: topic,
-            onChange: onTopicChange,
-            placeholder: DEFAULT_TOPIC,
-            mono: true,
-          },
-        ] as const
-      ).map(({ key, label, value, onChange, placeholder, mono }) => (
-        <div key={key} className="login-view__field">
-          <label className="login-view__field-label">{label}</label>
-          <input
-            value={value}
-            onChange={e => onChange(e.target.value)}
-            onBlur={() => localStorage.setItem(key, value)}
-            placeholder={placeholder}
-            className={`login-view__field-input${mono ? ' login-view__field-input--mono' : ''}`}
-          />
-          {mono && (!value || value === PLACEHOLDER_STAMP) && (
-            <span className="login-view__stamp-warning">⚠ No stamp set — uploads will rely on a smart gateway</span>
+
+          <div className="login-view__advanced-toggle">
+            <button onClick={() => setAdvancedOpen(o => !o)} className="login-view__advanced-toggle-btn" type="button">
+              {advancedOpen ? 'Hide Advanced Settings' : 'Advanced Settings'}
+            </button>
+          </div>
+
+          {advancedOpen && (
+            <div className="login-view__advanced">
+              {transport === Transport.WEBRTC && (
+                <div className="login-view__webrtc">
+                  <div className="login-view__tab-bar">
+                    {([WebrtcMode.SIGNALING_SERVER, WebrtcMode.SWARM_SIGNAL_FEED] as const).map(mode => (
+                      <button
+                        key={mode}
+                        onClick={() => {
+                          setWebrtcMode(mode)
+                          const itemKey = mode === WebrtcMode.SIGNALING_SERVER ? SIGNALING_URL_KEY : STUN_URL_KEY
+                          const placeHolderUrl =
+                            mode === WebrtcMode.SIGNALING_SERVER ? DEFAULT_SIGNALING_SERVER_URL : DEFAULT_ICE_SERVER_URL
+                          setServerUrl(placeHolderUrl)
+                          localStorage.setItem(itemKey, placeHolderUrl)
+                        }}
+                        className={`login-view__tab-btn${webrtcMode === mode ? ' login-view__tab-btn--active' : ''}`}
+                      >
+                        {mode === WebrtcMode.SIGNALING_SERVER ? 'Signaling Server URL' : 'Swarm Signaling STUN URL '}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    value={serverUrl}
+                    onChange={e => setServerUrl(e.target.value)}
+                    onBlur={() =>
+                      localStorage.setItem(
+                        webrtcMode === WebrtcMode.SIGNALING_SERVER ? SIGNALING_URL_KEY : STUN_URL_KEY,
+                        serverUrl,
+                      )
+                    }
+                    placeholder={
+                      webrtcMode === WebrtcMode.SIGNALING_SERVER ? DEFAULT_SIGNALING_SERVER_URL : DEFAULT_ICE_SERVER_URL
+                    }
+                    className="login-view__url-input"
+                  />
+                </div>
+              )}
+              <div className="login-view__field">
+                <label className="login-view__field-label">Bee API URL</label>
+                <input
+                  value={beeUrl}
+                  onChange={e => onBeeUrlChange(e.target.value)}
+                  onBlur={() => localStorage.setItem(BEE_URL_KEY, beeUrl)}
+                  placeholder={DEFAULT_BEE_API_URL}
+                  className="login-view__field-input"
+                />
+                {beeUrl === DEFAULT_BEE_API_URL && (
+                  <span className="login-view__stamp-warning">
+                    <AlertTriangle size={12} />
+                    Default Gateway is used
+                  </span>
+                )}
+              </div>
+
+              <div className="login-view__field">
+                <label className="login-view__field-label">MUTABLE_STAMP</label>
+                <input
+                  value={mutableStamp}
+                  onChange={e => onMutableStampChange(e.target.value)}
+                  onBlur={() => localStorage.setItem(MUTABLE_STAMP_KEY, mutableStamp)}
+                  placeholder={PLACEHOLDER_STAMP}
+                  className="login-view__field-input login-view__field-input--mono"
+                />
+                {(!mutableStamp || mutableStamp === PLACEHOLDER_STAMP) && (
+                  <span className="login-view__stamp-warning">
+                    <AlertTriangle size={12} />
+                    No stamp set — uploads will rely on a gateway
+                  </span>
+                )}
+              </div>
+
+              {transport !== Transport.SWARM_FEED_POLL && (
+                <label className="login-view__checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={disableUntilConnected}
+                    onChange={e => onDisableUntilConnectedChange(e.target.checked)}
+                  />
+                  Disable editing until peer connected
+                </label>
+              )}
+
+              {transport === Transport.SWARM_PUBSUB && (
+                <div className="login-view__field">
+                  <label className="login-view__field-label">Broker Peer</label>
+                  <input
+                    value={brokerPeer}
+                    onChange={e => setBrokerPeer(e.target.value)}
+                    onBlur={() => localStorage.setItem(BROKER_PEER_KEY, brokerPeer)}
+                    placeholder="/ip4/1.2.3.4/tcp/1634/p2p/QmXxxx…"
+                    className="login-view__url-input"
+                  />
+                </div>
+              )}
+            </div>
           )}
+
+          {pageError && (
+            <div className="login-view__error">
+              <AlertCircle size={14} />
+              <span className="login-view__error-text">{pageError}</span>
+            </div>
+          )}
+
+          <button onClick={submit} disabled={!inputName.trim() || validating} className="login-view__submit">
+            {validating ? (
+              'Checking stamps…'
+            ) : (
+              <>
+                <LogIn size={16} />
+                Join
+              </>
+            )}
+          </button>
         </div>
-      ))}
-      {pageError && (
-        <div className="login-view__error">
-          <span className="login-view__error-text">⚠ {pageError}</span>
-        </div>
-      )}
-      {transport !== Transport.SWARM && (
-        <label className="login-view__checkbox-label">
-          <input
-            type="checkbox"
-            checked={disableUntilConnected}
-            onChange={e => onDisableUntilConnectedChange(e.target.checked)}
-          />
-          Disable editing until peer connected
-        </label>
-      )}
-      <button onClick={submit} disabled={!inputName.trim() || validating} className="login-view__submit">
-        {validating ? 'Checking stamps…' : 'Join'}
-      </button>
+
+        <p className="login-view__footer">Powered by Ethereum Swarm</p>
+      </div>
     </div>
   )
 }

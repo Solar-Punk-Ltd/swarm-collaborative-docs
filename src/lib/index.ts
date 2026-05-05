@@ -9,6 +9,7 @@ export { createYWebrtcTransport } from './notification/yWebrtcTransport'
 export { createBroadcastChannelTransport } from './notification/broadcastChannel'
 export { createSwarmFeedTransport } from './notification/swarmFeed'
 export { createWakuTransport } from './notification/wakuTransport'
+export { createSwarmPubSubTransport } from './notification/swarmPubSubTransport'
 
 export type { DocSettings } from './interfaces'
 export type { NotificationPayload, NotificationHandler } from './interfaces'
