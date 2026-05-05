@@ -11,6 +11,8 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
 
     strategy:
       matrix:
