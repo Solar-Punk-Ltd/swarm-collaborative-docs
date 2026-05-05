@@ -1,0 +1,346 @@
+$swarm-orange: #f76808;
+$swarm-rose: #f43f5e;
+$swarm-dark: #050509;
+$swarm-surface: #0e0e1a;
+$swarm-elevated: #16162a;
+$swarm-border: rgba(120, 120, 180, 0.14);
+$swarm-muted: #8a8aa3;
+$swarm-text: #f8f8ff;
+$swarm-subtle: rgba(120, 120, 180, 0.08);
+
+.login-view {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: $swarm-dark;
+  background-image: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(247, 104, 8, 0.07), transparent 60%);
+  color: $swarm-text;
+  font-family: 'Inter', system-ui, sans-serif;
+
+  &__container {
+    width: 100%;
+    max-width: 440px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  &__brand {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+
+  &__logo {
+    width: 52px;
+    height: 52px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, $swarm-orange 0%, $swarm-rose 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    box-shadow: 0 10px 30px -8px rgba(247, 104, 8, 0.45);
+  }
+
+  &__title {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  &__subtitle {
+    margin: 0;
+    font-size: 12px;
+    color: $swarm-muted;
+  }
+
+  &__card {
+    background: $swarm-surface;
+    border: 1px solid $swarm-border;
+    border-radius: 20px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    box-shadow: 0 20px 60px -20px rgba(0, 0, 0, 0.6);
+  }
+
+  &__input {
+    width: 100%;
+    background: $swarm-elevated;
+    border: 1px solid $swarm-border;
+    border-radius: 12px;
+    padding: 12px 14px;
+    font-size: 14px;
+    color: $swarm-text;
+    font-family: inherit;
+    outline: none;
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.15s ease;
+
+    &::placeholder {
+      color: rgba(138, 138, 163, 0.6);
+    }
+
+    &:focus {
+      border-color: rgba(247, 104, 8, 0.5);
+      box-shadow: 0 0 0 3px rgba(247, 104, 8, 0.12);
+    }
+  }
+
+  &__tab-bar {
+    display: flex;
+    padding: 4px;
+    background: $swarm-elevated;
+    border: 1px solid $swarm-border;
+    border-radius: 12px;
+    gap: 4px;
+  }
+
+  &__tab-btn {
+    flex: 1;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    background: transparent;
+    color: $swarm-muted;
+    font-family: inherit;
+    transition:
+      background 0.15s ease,
+      color 0.15s ease;
+
+    &:hover:not(&--active) {
+      color: $swarm-text;
+    }
+
+    &--active {
+      background: rgba(247, 104, 8, 0.12);
+      color: $swarm-orange;
+      box-shadow: inset 0 0 0 1px rgba(247, 104, 8, 0.25);
+    }
+  }
+
+  &__webrtc {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  &__url-input {
+    width: 100%;
+    background: $swarm-elevated;
+    border: 1px solid $swarm-border;
+    border-radius: 12px;
+    padding: 10px 12px;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+    color: $swarm-text;
+    outline: none;
+    transition: border-color 0.15s ease;
+
+    &::placeholder {
+      color: rgba(138, 138, 163, 0.5);
+    }
+
+    &:focus {
+      border-color: rgba(247, 104, 8, 0.5);
+    }
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  &__field-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: $swarm-muted;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  &__field-input {
+    width: 100%;
+    background: $swarm-elevated;
+    border: 1px solid $swarm-border;
+    border-radius: 12px;
+    padding: 10px 12px;
+    font-size: 13px;
+    color: $swarm-text;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s ease;
+
+    &::placeholder {
+      color: rgba(138, 138, 163, 0.5);
+    }
+
+    &:focus {
+      border-color: rgba(247, 104, 8, 0.5);
+    }
+
+    &--mono {
+      font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+      font-size: 12px;
+    }
+  }
+
+  &__stamp-warning {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #fbbf24;
+  }
+
+  &__error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #fca5a5;
+    padding: 10px 12px;
+    background: rgba(244, 63, 94, 0.08);
+    border: 1px solid rgba(244, 63, 94, 0.2);
+    border-radius: 12px;
+
+    &-text {
+      flex: 1;
+    }
+  }
+
+  &__checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: $swarm-muted;
+    cursor: pointer;
+    user-select: none;
+
+    input[type='checkbox'] {
+      accent-color: $swarm-orange;
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+    }
+  }
+
+  &__submit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(135deg, $swarm-orange 0%, $swarm-rose 100%);
+    color: #fff;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 10px 24px -10px rgba(247, 104, 8, 0.55);
+    transition:
+      transform 0.08s ease,
+      opacity 0.15s ease;
+
+    &:hover:not(:disabled) {
+      opacity: 0.94;
+    }
+
+    &:active:not(:disabled) {
+      transform: scale(0.98);
+    }
+
+    &:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+  }
+
+  &__footer {
+    text-align: center;
+    font-size: 11px;
+    color: rgba(138, 138, 163, 0.5);
+    margin-top: 4px;
+  }
+
+  &__doc-id-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+  }
+
+  &__invite-btn {
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid $swarm-border;
+    background: transparent;
+    color: $swarm-muted;
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      background 0.12s ease,
+      color 0.12s ease;
+  }
+
+  &__invite-btn--copied {
+    background: rgba(34, 197, 94, 0.12);
+    color: #22c55e;
+    border-color: rgba(34, 197, 94, 0.18);
+  }
+
+  &__new-id-btn {
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid $swarm-border;
+    background: transparent;
+    color: $swarm-muted;
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      background 0.12s ease,
+      color 0.12s ease;
+  }
+
+  &__new-id-btn--clicked {
+    background: rgba(34, 197, 94, 0.12);
+    color: #c59a22;
+    border-color: rgba(34, 197, 94, 0.18);
+  }
+
+  &__advanced-toggle {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  &__advanced-toggle-btn {
+    background: transparent;
+    border: none;
+    color: $swarm-muted;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 6px 8px;
+  }
+
+  &__advanced {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+}

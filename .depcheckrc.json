@@ -1,0 +1,13 @@
+{
+  "ignores": [
+    "@types/*",
+    "@commitlint/*",
+    "@eslint/*",
+    "eslint*",
+    "husky",
+    "rimraf",
+    "sass",
+    "@vitejs/plugin-react",
+    "lib"
+  ]
+}
