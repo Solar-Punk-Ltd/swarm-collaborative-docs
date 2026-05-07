@@ -290,7 +290,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
               </div>
 
               <div className="login-view__field">
-                <label className="login-view__field-label">MUTABLE_STAMP</label>
+                <label className="login-view__field-label">Postage stamp</label>
                 <input
                   value={mutableStamp}
                   onChange={e => onMutableStampChange(e.target.value)}
@@ -306,16 +306,14 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 )}
               </div>
 
-              {transport !== Transport.SWARM_FEED_POLL && (
-                <label className="login-view__checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={disableUntilConnected}
-                    onChange={e => onDisableUntilConnectedChange(e.target.checked)}
-                  />
-                  Disable editing until peer connected
-                </label>
-              )}
+              <label className="login-view__checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={disableUntilConnected}
+                  onChange={e => onDisableUntilConnectedChange(e.target.checked)}
+                />
+                Disable editing until peer connected
+              </label>
 
               {transport === Transport.SWARM_PUBSUB && (
                 <div className="login-view__field">

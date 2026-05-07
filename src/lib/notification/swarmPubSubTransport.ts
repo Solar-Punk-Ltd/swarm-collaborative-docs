@@ -4,12 +4,14 @@ import { DOC_EVENTS } from '../doc/events'
 import type { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/docTransport'
 import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
 import { ErrorHandler } from '../utils/error'
+import { Logger } from '../utils/logger'
 
 const TAG = 'SwarmNotifTransport'
 const WS_RECONNECT_TIMEOUT_MS = 10_000
 
 class SwarmPubSubDocTransport implements DocTransport {
   private errorHandler = ErrorHandler.getInstance()
+  private logger = Logger.getInstance()
   private subscription: PubsubSubscription | null = null
   private stopped = false
   private isConnecting = false
@@ -68,7 +70,7 @@ class SwarmPubSubDocTransport implements DocTransport {
           this.isConnecting = false
           this.isConnected = true
           this.deps.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
-          console.log(`${TAG} connected, topicAddress derived from docFeedId=${this.deps.docFeedId}`)
+          this.logger.log(`${TAG} connected, docFeedId=${this.deps.docFeedId}`)
 
           // Drain buffered publishes now that the WebSocket is open
           const toSend = this.pendingPublishes.splice(0)
@@ -96,7 +98,7 @@ class SwarmPubSubDocTransport implements DocTransport {
         },
         onClose: _sub => {
           if (!this.stopped) {
-            console.warn(`${TAG} connection closed, reconnecting…`)
+            this.logger.warn(`${TAG} connection closed, reconnecting…`)
             this.subscription = null
             this.isConnecting = false
             this.isConnected = false

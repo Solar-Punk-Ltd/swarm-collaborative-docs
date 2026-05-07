@@ -1,11 +1,63 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
+
+import { AwarenessState } from '../../hooks/useSwarmDoc'
+import { colorForAddress } from '../../utils/peerColor'
 
 import './DocEditor.scss'
 
-interface DocEditorProps {
-  doc: Y.Doc | null
-  disabled?: boolean
+// Mirror-div technique: measure pixel coordinates of a character offset in a textarea.
+// Returns coordinates relative to the textarea's top-left padding origin.
+function getCaretXY(el: HTMLTextAreaElement, position: number): { top: number; left: number } {
+  const style = window.getComputedStyle(el)
+  const div = document.createElement('div')
+
+  const props = [
+    'boxSizing',
+    'width',
+    'paddingTop',
+    'paddingRight',
+    'paddingBottom',
+    'paddingLeft',
+    'borderTopWidth',
+    'borderRightWidth',
+    'borderBottomWidth',
+    'borderLeftWidth',
+    'fontFamily',
+    'fontSize',
+    'fontWeight',
+    'fontStyle',
+    'fontVariant',
+    'lineHeight',
+    'letterSpacing',
+    'wordSpacing',
+    'textTransform',
+    'textIndent',
+    'whiteSpace',
+    'wordBreak',
+    'wordWrap',
+    'tabSize',
+  ] as const
+
+  div.style.position = 'absolute'
+  div.style.visibility = 'hidden'
+  div.style.top = '-9999px'
+  div.style.left = '-9999px'
+  div.style.overflow = 'hidden'
+  props.forEach(p => {
+    div.style[p as never] = style[p as never]
+  })
+
+  const text = el.value.slice(0, position)
+  div.textContent = text || ' '
+  const span = document.createElement('span')
+  span.textContent = el.value[position] ?? ' '
+  div.appendChild(span)
+  document.body.appendChild(div)
+  const coords = { top: span.offsetTop, left: span.offsetLeft }
+  document.body.removeChild(div)
+
+  return coords
 }
 
 function commonPrefixLen(a: string, b: string): number {
@@ -23,8 +75,6 @@ function commonSuffixLen(a: string, b: string, prefixLen: number): number {
   return i
 }
 
-// Apply only the diff between oldValue and newValue to Y.Text.
-// This preserves other users' items that are outside the changed range.
 function applyDiff(yText: Y.Text, doc: Y.Doc, oldValue: string, newValue: string): void {
   const prefix = commonPrefixLen(oldValue, newValue)
   const suffix = commonSuffixLen(oldValue, newValue, prefix)
@@ -32,7 +82,6 @@ function applyDiff(yText: Y.Text, doc: Y.Doc, oldValue: string, newValue: string
   const insertText = newValue.slice(prefix, newValue.length - suffix)
 
   if (deleteCount === 0 && insertText.length === 0) return
-
   doc.transact(() => {
     if (deleteCount > 0) yText.delete(prefix, deleteCount)
 
@@ -40,41 +89,93 @@ function applyDiff(yText: Y.Text, doc: Y.Doc, oldValue: string, newValue: string
   })
 }
 
-export const DocEditor: React.FC<DocEditorProps> = ({ doc, disabled = false }) => {
+interface DocEditorProps {
+  doc: Y.Doc | null
+  disabled?: boolean
+  awareness?: Map<string, AwarenessState>
+  onCursorChange?: (cursor: { anchor: number; head: number } | null) => void
+}
+
+interface CursorBadge {
+  address: string
+  username: string
+  color: string
+  top: number
+  left: number
+  lineHeight: number
+}
+
+export const DocEditor: React.FC<DocEditorProps> = ({ doc, disabled = false, awareness, onCursorChange }) => {
   const yTextRef = useRef<Y.Text | null>(null)
   const prevContentRef = useRef('')
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [content, setContent] = useState('')
+  const [scrollTop, setScrollTop] = useState(0)
+  const [badges, setBadges] = useState<CursorBadge[]>([])
 
   useEffect(() => {
     if (!doc) return
-
     const yText = doc.getText('content')
     yTextRef.current = yText
-
     const initial = yText.toString()
     prevContentRef.current = initial
     setContent(initial)
-
     const observer = () => {
       const text = yText.toString()
       prevContentRef.current = text
       setContent(text)
     }
-
     yText.observe(observer)
 
     return () => yText.unobserve(observer)
   }, [doc])
 
+  // Recompute badge positions whenever awareness or content changes
+  useLayoutEffect(() => {
+    const el = textareaRef.current
+
+    if (!el || !awareness || awareness.size === 0) {
+      setBadges([])
+
+      return
+    }
+
+    const style = window.getComputedStyle(el)
+    const lineHeight = parseFloat(style.lineHeight)
+    const next: CursorBadge[] = []
+
+    for (const [address, state] of awareness) {
+      if (state.cursor) {
+        const pos = Math.max(0, Math.min(state.cursor.anchor, el.value.length))
+        const { top, left } = getCaretXY(el, pos)
+        next.push({
+          address,
+          username: state.username,
+          color: colorForAddress(address),
+          top: top - scrollTop,
+          left,
+          lineHeight,
+        })
+      }
+    }
+
+    setBadges(next)
+  }, [awareness, content, scrollTop])
+
+  const reportCursor = () => {
+    const el = textareaRef.current
+
+    if (!el || !onCursorChange) return
+    onCursorChange({ anchor: el.selectionStart, head: el.selectionEnd })
+  }
+
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     if (!yTextRef.current || !doc) return
-
     const newValue = e.target.value
     const oldValue = prevContentRef.current
-    // Update prevContent immediately so rapid keystrokes diff against the right base
     prevContentRef.current = newValue
-
     applyDiff(yTextRef.current, doc, oldValue, newValue)
+    reportCursor()
   }
 
   if (!doc) {
@@ -84,13 +185,36 @@ export const DocEditor: React.FC<DocEditorProps> = ({ doc, disabled = false }) =
   return (
     <div className="doc-editor">
       <textarea
+        ref={textareaRef}
         className="doc-editor__textarea"
         value={content}
         onChange={handleChange}
+        onSelect={reportCursor}
+        onKeyUp={reportCursor}
+        onClick={reportCursor}
+        onScroll={e => setScrollTop((e.target as HTMLTextAreaElement).scrollTop)}
         disabled={disabled}
         placeholder="Start typing — changes sync across peers via Swarm…"
         spellCheck={false}
       />
+      {badges.length > 0 && (
+        <div className="doc-editor__cursor-overlay" aria-hidden="true">
+          {badges.map(b => (
+            <React.Fragment key={b.address}>
+              <div
+                className="doc-editor__cursor-line"
+                style={{ top: b.top, left: b.left, height: b.lineHeight, background: b.color }}
+              />
+              <div
+                className="doc-editor__cursor-badge"
+                style={{ top: Math.max(0, b.top - 20), left: b.left, background: b.color }}
+              >
+                {b.username || b.address.slice(0, 6)}
+              </div>
+            </React.Fragment>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

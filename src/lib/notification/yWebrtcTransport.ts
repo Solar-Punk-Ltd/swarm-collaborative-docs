@@ -3,10 +3,12 @@ import { WebrtcProvider } from 'y-webrtc'
 import { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/docTransport'
 import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
 import { remove0x } from '../utils/common'
+import { Logger } from '../utils/logger'
 
 const TAG = 'YWebrtcTransport'
 
 class YWebrtcTransport implements DocTransport {
+  private logger = Logger.getInstance()
   private provider: WebrtcProvider | null = null
 
   constructor(
@@ -37,14 +39,14 @@ class YWebrtcTransport implements DocTransport {
         const address = userState?.address ? remove0x(userState.address.toLowerCase()) : null
 
         if (!isSelf && address && address !== this.deps.ownAddress && !this.deps.members.has(address)) {
-          console.log(`${TAG} awareness: new peer ${address.slice(0, 8)}…`)
+          this.logger.log(`${TAG} awareness: new peer ${address.slice(0, 8)}…`)
           // TODO: use username
           this.deps.onPeerDiscovered(address, 'unknown')
         }
       }
     })
 
-    console.log(`${TAG} started, room=${room}, signalingUrl=${this.signalingUrl}`)
+    this.logger.log(`${TAG} started, room=${room}, signalingUrl=${this.signalingUrl}`)
   }
 
   stop(): void {

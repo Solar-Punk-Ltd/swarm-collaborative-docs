@@ -6,6 +6,8 @@
  * swarmDoc.getEmitter().on(DOC_EVENTS.DOC_ERROR,   (err: Error) => ...)
  * swarmDoc.getEmitter().on(DOC_EVENTS.MEMBERS_UPDATED, (members: Map<string, string>) => ...)
  * swarmDoc.getEmitter().on(DOC_EVENTS.PEERS_CONNECTED, (connected: true) => ...)
+ * swarmDoc.getEmitter().on(DOC_EVENTS.AWARENESS_UPDATED,
+ *   (update: { address: string; username: string; cursor: { anchor: number; head: number } | null }) => ...)
  * ```
  */
 export const DOC_EVENTS = {
@@ -17,4 +19,10 @@ export const DOC_EVENTS = {
   MEMBERS_UPDATED: 'membersUpdated',
   /** Fired once when the transport has at least one connected peer. Payload: `true`. */
   PEERS_CONNECTED: 'peersConnected',
+  /**
+   * Fired when a peer's cursor position changes.
+   * Payload: `{ address: string; username: string; cursor: { anchor: number; head: number } | null }`.
+   * `cursor: null` means the peer deselected or disconnected.
+   */
+  AWARENESS_UPDATED: 'awarenessUpdated',
 }

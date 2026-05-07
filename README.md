@@ -306,7 +306,7 @@ Enter a username, then configure:
   - _WebRTC_ — y-webrtc via a signaling server or Swarm-based SDP signaling (see Advanced Settings)
 - **Advanced Settings** (collapsible):
   - Bee API URL
-  - `MUTABLE_STAMP` postage batch ID
+  - Postage batch ID
   - Disable editing until a peer is connected (WebRTC / Waku only)
   - Broker Peer multiaddress (Swarm PubSub only)
   - Signaling Server URL or Swarm Signaling STUN URL (WebRTC only)

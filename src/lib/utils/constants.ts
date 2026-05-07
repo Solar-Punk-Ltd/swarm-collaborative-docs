@@ -13,7 +13,5 @@ export const MEMBERS_FEED_SUFFIX = '_members'
 export const NOTIFY_FEED_SUFFIX = '_notify'
 /** Feed ID suffix for per-user WebRTC signaling feeds: `<topic>_signal`. */
 export const SIGNAL_FEED_SUFFIX = '_signal'
-/** Sentinel `feedIndex` value used in `NotificationPayload` to signal a peer join event. */
-export const JOIN_FEED_INDEX = -1n
 /** Fallback STUN server URL used alongside the primary STUN URL in `SwarmRtcTransport`. */
 export const FALLBACK_ICE_SERVER_URL = 'stun:stun.cloudflare.com:3478'

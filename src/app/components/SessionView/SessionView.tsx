@@ -1,7 +1,5 @@
 import { PrivateKey } from '@ethersphere/bee-js'
 import {
-  createBroadcastChannelTransport,
-  createSwarmFeedTransport,
   createSwarmPubSubTransport,
   createSwarmRtcTransport,
   createWakuTransport,
@@ -21,6 +19,7 @@ import {
   MUTABLE_STAMP_KEY,
   TOPIC_KEY,
 } from '../../utils/constants'
+import { colorForAddress } from '../../utils/peerColor'
 import { Session, Transport, TRANSPORT_LABELS } from '../../utils/types'
 import { DocEditor } from '../DocEditor/DocEditor'
 
@@ -71,14 +70,6 @@ export const SessionView: React.FC<SessionViewProps> = ({
 
   const docConfig: DocSettings = useMemo(() => {
     const getTransport = () => {
-      if (session.transport === Transport.BROADCAST_CHANNEL) {
-        return createBroadcastChannelTransport()
-      }
-
-      if (session.transport === Transport.SWARM_FEED_POLL) {
-        return createSwarmFeedTransport(beeUrl, signer.toHex(), mutableStamp, topic)
-      }
-
       if (session.transport === Transport.WAKU) {
         let wakuAddress: string[] | undefined = undefined
 
@@ -131,7 +122,8 @@ export const SessionView: React.FC<SessionViewProps> = ({
     mutableStamp,
   ])
 
-  const { doc, error, members, connected, refreshMemberList, dismissError } = useSwarmDoc(docConfig)
+  const { doc, error, members, connected, awareness, updateCursor, refreshMemberList, dismissError } =
+    useSwarmDoc(docConfig)
 
   const transportLabel = TRANSPORT_LABELS[session.transport]
 
@@ -146,7 +138,12 @@ export const SessionView: React.FC<SessionViewProps> = ({
             </button>
           </div>
         ) : null}
-        <DocEditor doc={doc} disabled={disableUntilConnected && !connected} />
+        <DocEditor
+          doc={doc}
+          disabled={disableUntilConnected && !connected}
+          awareness={awareness}
+          onCursorChange={updateCursor}
+        />
       </div>
     )
   }
@@ -159,7 +156,11 @@ export const SessionView: React.FC<SessionViewProps> = ({
     for (const [addr, username] of members) {
       block.push(
         <span key={addr} className="session-view__member-chip">
-          <span className="session-view__member-dot" aria-hidden="true" />
+          <span
+            className="session-view__member-dot"
+            aria-hidden="true"
+            style={{ background: colorForAddress(addr), boxShadow: `0 0 0 2px ${colorForAddress(addr)}33` }}
+          />
           <code className="session-view__member-code" title={addr}>
             {username.length ? username : addr.slice(0, 8) + '…'}
           </code>
@@ -244,7 +245,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
                   onReset: () => setUrlDraft(DEFAULT_BEE_API_URL),
                 },
                 {
-                  label: 'MUTABLE_STAMP',
+                  label: 'Postage stamp',
                   value: mutableStampDraft,
                   onChange: setMutableStampDraft,
                   placeholder: PLACEHOLDER_STAMP,
@@ -252,7 +253,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
                   onReset: () => setMutableStampDraft(PLACEHOLDER_STAMP),
                 },
                 {
-                  label: 'TOPIC',
+                  label: 'Topic',
                   value: topicDraft,
                   onChange: setTopicDraft,
                   placeholder: DEFAULT_TOPIC,

@@ -1,4 +1,4 @@
-import { FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
+import { FeedIndex, PrivateKey, Signature, Topic } from '@ethersphere/bee-js'
 import {
   MessageData,
   MessageType,
@@ -11,7 +11,7 @@ import * as Y from 'yjs'
 import { DocSettings, DocTransport, NotificationHandler, NotificationPayload } from '../interfaces'
 import { validateStamps } from '../utils/bee'
 import { decode, encode, indexStrToBigint, remove0x, retryAwaitableAsync, uuidV4 } from '../utils/common'
-import { API_VERSION, DOC_FEED_SUFFIX, JOIN_FEED_INDEX, PLACEHOLDER_STAMP } from '../utils/constants'
+import { API_VERSION, DOC_FEED_SUFFIX, PLACEHOLDER_STAMP } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
 import { EventEmitter } from '../utils/eventEmitter'
 
@@ -61,6 +61,8 @@ export class SwarmDoc {
   private publishInFlight = false
   private fetchProcessRunning = false
   private memberListPollTimer: ReturnType<typeof setInterval> | null = null
+  private localCursor: { anchor: number; head: number } | null = null
+  private cursorTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(settings: DocSettings) {
     this.doc = new Y.Doc()
@@ -81,12 +83,6 @@ export class SwarmDoc {
       ? Array.from(settings.infra.members.entries()).map(([addr, username]) => [remove0x(addr.toLowerCase()), username])
       : []
     const members = configuredMembers.filter(([addr]) => addr !== this.ownAddress)
-
-    console.log(`${TAG} ownAddress: ${this.ownAddress}`)
-    console.log(`${TAG} feedNamespace: ${this.docFeedId}`)
-    console.log(`${TAG} topic identifier: ${Topic.fromString(this.docFeedId + this.ownAddress).toString()}`)
-    console.log(`${TAG} members configured: ${members.length === 0 ? '(none)' : members.map(m => m).join(', ')}`)
-    console.log(`${TAG} mutable stamp: ${this.mutableStampId}`)
 
     this.transport = settings.infra.transport({
       doc: this.doc,
@@ -138,7 +134,7 @@ export class SwarmDoc {
     }
 
     this.transport.connectToPeer(address)
-    console.log(`${TAG} registerMember: ${address.slice(0, 8)}…`)
+    console.debug(`${TAG} registerMember: ${address.slice(0, 8)}…`)
   }
 
   /**
@@ -149,12 +145,17 @@ export class SwarmDoc {
     this.transport.start()
 
     // Collect incremental Yjs updates; debounce into a single publish.
-    // Guard both the legacy 'remote' string origin and transport-specific origins.
     this.doc.on('update', (update: Uint8Array, origin: unknown) => {
-      if (this.isRemoteOrigin(origin)) return
+      if (this.isRemoteOrigin(origin)) {
+        return
+      }
+
       this.pendingUpdates.push(update)
 
-      if (this.debounceTimer) clearTimeout(this.debounceTimer)
+      if (this.debounceTimer) {
+        clearTimeout(this.debounceTimer)
+      }
+
       this.debounceTimer = setTimeout(() => {
         const captured = [...this.pendingUpdates]
         this.pendingUpdates = []
@@ -166,6 +167,17 @@ export class SwarmDoc {
     this.init()
     this.startFetchProcess()
     this.startMemberListPoll()
+    this.startCursorBroadcast()
+  }
+
+  /**
+   * Updates the local cursor position in the shared `Y.Text` and schedules a broadcast.
+   * Call this from the editor's selection-change handler.
+   *
+   * @param cursor Character index offsets `{ anchor, head }`, or `null` to clear.
+   */
+  public updateCursor(cursor: { anchor: number; head: number } | null): void {
+    this.localCursor = cursor
   }
 
   // Returns true for any origin that should not trigger a Swarm publish or RTC forward.
@@ -180,6 +192,11 @@ export class SwarmDoc {
     if (this.memberListPollTimer) {
       clearInterval(this.memberListPollTimer)
       this.memberListPollTimer = null
+    }
+
+    if (this.cursorTimer) {
+      clearInterval(this.cursorTimer)
+      this.cursorTimer = null
     }
 
     this.transport.stop()
@@ -218,10 +235,7 @@ export class SwarmDoc {
     this.publishInFlight = true
 
     try {
-      // Full snapshot → written to Swarm with mutable stamp (old chunks get recycled)
       const snapshot = encode(Y.encodeStateAsUpdate(this.doc))
-
-      // Delta → sent in notification payload for peers already online (no Swarm read needed)
       const delta = encode(Y.mergeUpdates(allUpdates))
 
       const nextIndex = this.ownIndex === -1n ? 0n : this.ownIndex + 1n
@@ -229,7 +243,7 @@ export class SwarmDoc {
         `${TAG} publishSnapshot → index: ${nextIndex}, snapshot: ${(snapshot.length * 0.75) | 0}B, delta: ${(delta.length * 0.75) | 0}B`,
       )
 
-      // TODO: sign messages ?
+      // TODO: sign messages
       const messageObj: MessageData = {
         id: uuidV4(),
         username: this.username,
@@ -246,13 +260,18 @@ export class SwarmDoc {
       this.ownIndex = nextIndex
       console.log(`${TAG} publishSnapshot ✓ index: ${this.ownIndex}`)
 
+      const deltaBytes = decode(delta)
+      const sig = this.signer.sign(deltaBytes).toHex()
+
       this.transport.publish({
+        type: 'doc',
         v: API_VERSION,
         topic: this.docTopic,
         author: this.ownAddress,
         username: this.username,
         feedIndex: Number(nextIndex),
         delta,
+        sig,
       })
     } catch (err) {
       this.errorHandler.handleError(err, `${TAG}.publishSnapshot`)
@@ -323,13 +342,13 @@ export class SwarmDoc {
 
     this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
 
-    // JOIN_FEED_INDEX sentinel: announce presence via transport
+    // Announce presence to online peers
     this.transport.publish({
+      type: 'join',
       v: API_VERSION,
       topic: this.docTopic,
       author: this.ownAddress,
       username: this.username,
-      feedIndex: Number(JOIN_FEED_INDEX),
     })
     console.log(`${TAG} initMemberList: join notification sent`)
 
@@ -485,12 +504,53 @@ export class SwarmDoc {
 
       if (author === this.ownAddress) return
 
-      // JOIN_FEED_INDEX: join notification — register peer and fetch their latest snapshot
-      if (payload.feedIndex === Number(JOIN_FEED_INDEX)) {
+      if (payload.type === 'join') {
         console.log(`${TAG} notification: join from ${author.slice(0, 8)}…`)
         this.registerMember(author, payload.username)
         this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
         this.fetchLatestFromMember(author)
+
+        return
+      }
+
+      if (payload.type === 'cursor') {
+        this.emitter.emit(DOC_EVENTS.AWARENESS_UPDATED, {
+          address: author,
+          username: payload.username,
+          cursor: payload.cursor,
+        })
+
+        return
+      }
+
+      if (payload.type !== 'doc') {
+        console.warn(`${TAG} unknown payload type from ${author.slice(0, 8)}…`)
+
+        return
+      }
+
+      if (!payload.delta) {
+        console.warn(`${TAG} dropping message from ${author.slice(0, 8)}…, no delta provided`)
+
+        return
+      }
+
+      if (!payload.sig) {
+        console.warn(`${TAG} dropping unsigned delta from ${author.slice(0, 8)}…`)
+
+        return
+      }
+
+      try {
+        const valid = new Signature(payload.sig).isValid(decode(payload.delta), author)
+
+        if (!valid) {
+          console.warn(`${TAG} dropping delta with invalid signature from ${author.slice(0, 8)}…`)
+
+          return
+        }
+      } catch {
+        console.warn(`${TAG} signature verification error from ${author.slice(0, 8)}… — dropping`)
 
         return
       }
@@ -502,5 +562,18 @@ export class SwarmDoc {
     }
 
     this.transport.subscribe(this.docTopic, handler)
+  }
+
+  private startCursorBroadcast(): void {
+    this.cursorTimer = setInterval(() => {
+      this.transport.publish({
+        type: 'cursor',
+        v: API_VERSION,
+        topic: this.docTopic,
+        author: this.ownAddress,
+        username: this.username,
+        cursor: this.localCursor,
+      })
+    }, DEBOUNCE_MS)
   }
 }

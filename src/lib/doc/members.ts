@@ -41,7 +41,6 @@ export class Members {
     this.topic = Topic.fromString(memberFeedId)
     this.bee = new Bee(beeUrl)
     this.stamp = stamp || PLACEHOLDER_STAMP
-    console.log(`${TAG} consensus address: ${this.address}`)
   }
 
   // ── Local session tracking ────────────────────────────────────────────────
@@ -126,16 +125,13 @@ export class Members {
     }
 
     if (members.has(normalizedAddress)) {
-      console.log(`${TAG} add: ${normalizedAddress.slice(0, 8)}… already in list`)
+      console.debug(`${TAG} add: ${normalizedAddress.slice(0, 8)}… already in list`)
 
       return members
     }
 
     members.set(normalizedAddress, username)
     const nextIndex = this.currentIndex === -1n ? 0n : this.currentIndex + 1n
-    console.log(
-      `${TAG} add: writing index ${nextIndex}, total: ${members.size}, members: ${JSON.stringify(Object.fromEntries(members))}`,
-    )
 
     const writer = this.bee.makeFeedWriter(this.topic, this.signer)
     try {
@@ -162,11 +158,11 @@ export class Members {
         3,
         500,
       )
-      console.log(`${TAG} add: verified — ${Array.from(verified.keys()).join(', ')}`)
+      console.debug(`${TAG} add: verified — ${Array.from(verified.keys()).join(', ')}`)
 
       return verified
     } catch {
-      console.log(`${TAG} add: verify timed out, using optimistic list`)
+      console.debug(`${TAG} add: verify timed out, using optimistic list`)
 
       return members
     }

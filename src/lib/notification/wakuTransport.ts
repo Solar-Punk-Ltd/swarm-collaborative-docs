@@ -13,6 +13,7 @@ import { DOC_EVENTS } from '../doc/events'
 import type { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/docTransport'
 import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
 import { ErrorHandler } from '../utils/error'
+import { Logger } from '../utils/logger'
 
 const TAG = 'WakuTransport'
 
@@ -22,6 +23,7 @@ function contentTopicFor(topic: string): string {
 
 class WakuDocTransport implements DocTransport {
   private errorHandler = ErrorHandler.getInstance()
+  private logger = Logger.getInstance()
   private node: LightNode | null = null
   private stopped = false
 
@@ -91,7 +93,7 @@ class WakuDocTransport implements DocTransport {
     }
 
     this.node = node
-    console.log(`${TAG} node connected`)
+    this.logger.log(`${TAG} node connected`)
     this.deps.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
 
     if (this.pendingSubscription) {
@@ -152,18 +154,24 @@ class WakuDocTransport implements DocTransport {
     this.node.filter
       .subscribe([decoder], callback)
       .then(ok => {
-        console.log(`${TAG} subscribed to ${contentTopic} ok=${ok}`)
+        this.logger.log(`${TAG} subscribed to ${contentTopic} ok=${ok}`)
       })
       .catch(err => this.errorHandler.handleError(err, `${TAG}.subscribe`))
   }
 
   private async sendPayload(payload: NotificationPayload): Promise<void> {
-    if (!this.node || !this.encoder) return
+    if (!this.node || !this.encoder) {
+      return
+    }
 
     const bytes = new TextEncoder().encode(JSON.stringify(payload))
-    const result = await this.node.lightPush.send(this.encoder, { payload: bytes })
 
-    console.log(`${TAG} sent successes=${result.successes.length} failures=${result.failures.length}`)
+    try {
+      const result = await this.node.lightPush.send(this.encoder, { payload: bytes })
+      this.logger.debug(`${TAG} send successes=${result.successes.length} failures=${result.failures.length}`)
+    } catch (err: unknown) {
+      this.logger.error(`${TAG} unknown send error=${err}`)
+    }
   }
 }
 

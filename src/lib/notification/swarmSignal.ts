@@ -71,13 +71,14 @@ export class SwarmSignal {
    */
   // eslint-disable-next-line require-await
   async writeRecord(record: SignalRecord): Promise<void> {
-    console.log(
-      `${TAG} writeRecord called — type=${record.type} to=${record.toAddress.slice(0, 8)}… sessionId=${record.sessionId.slice(0, 8)} ts=${record.timestamp}`,
-    )
     this.writeQueue = this.writeQueue.then(async () => {
       const current = await this.readOwn()
       const filtered = current.records.filter(r => !(r.type === record.type && r.toAddress === record.toAddress))
       await this.writePayload({ records: [...filtered, record] })
+
+      console.debug(
+        `${TAG} writePayload — type=${record.type} to=${record.toAddress.slice(0, 8)}… sessionId=${record.sessionId.slice(0, 8)} ts=${record.timestamp}`,
+      )
     })
 
     return this.writeQueue
@@ -89,14 +90,16 @@ export class SwarmSignal {
    *  Enqueued so it never runs concurrently with writeRecord. */
   // eslint-disable-next-line require-await
   async clearOwn(): Promise<void> {
-    console.log(`${TAG} clearOwn: starting`)
     this.writeQueue = this.writeQueue.then(async () => {
       const current = await this.readOwn()
 
-      if (current.records.length === 0) return
+      if (current.records.length === 0) {
+        return
+      }
 
       await this.writePayload({ records: [] })
-      console.log(`${TAG} clearOwn: cleared ${current.records.length} stale record(s)`)
+
+      console.debug(`${TAG} clearOwn: cleared ${current.records.length} stale record(s)`)
     })
 
     return this.writeQueue
@@ -131,7 +134,7 @@ export class SwarmSignal {
         deferred: false,
       })
       this.currentIndex = nextIndex
-      console.log(`${TAG} writePayload ✓ index: ${nextIndex}`)
+      console.debug(`${TAG} writePayload ✓ index: ${nextIndex}`)
     } catch (err) {
       this.errorHandler.handleError(err, `${TAG}.writePayload`)
     }
