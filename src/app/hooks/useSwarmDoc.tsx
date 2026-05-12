@@ -1,7 +1,6 @@
-import { DOC_EVENTS, DocSettings, SwarmDoc } from 'lib'
+import { DOC_EVENTS, DocSettings, ISwarmDoc, SwarmDoc } from 'lib'
 import { useEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
-
 export interface AwarenessState {
   address: string
   username: string
@@ -20,7 +19,7 @@ export interface SwarmDocContext {
 }
 
 export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
-  const docRef = useRef<SwarmDoc | null>(null)
+  const docRef = useRef<ISwarmDoc | null>(null)
   const [doc, setDoc] = useState<Y.Doc | null>(null)
   const [{ error, members, connected }, setStatus] = useState<{
     error: Error | null

@@ -12,7 +12,14 @@ export { createSwarmPubSubTransport } from './notification/swarmPubSubTransport'
 export type { DocSettings } from './interfaces'
 export type { NotificationPayload, NotificationHandler, JoinPayload, DocPayload, CursorPayload } from './interfaces'
 export type { SignalRecord, SignalFeedPayload } from './interfaces'
-export type { DocTransport, DocTransportDeps, DocTransportFactory } from './interfaces'
+export type {
+  DocTransport,
+  DocTransportDeps,
+  DocTransportFactory,
+  ISwarmDoc,
+  IMembers,
+  ISwarmSignal,
+} from './interfaces'
 
 export { getSigner, validateStamps } from './utils/bee'
 export { indexStrToBigint, uuidV4 } from './utils/common'

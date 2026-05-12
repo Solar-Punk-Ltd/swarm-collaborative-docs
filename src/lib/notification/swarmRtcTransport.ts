@@ -1,8 +1,8 @@
 import * as Y from 'yjs'
 
 import { DOC_EVENTS } from '../doc/events'
-import { SignalRecord, SignalType } from '../interfaces'
-import { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/docTransport'
+import { ISwarmSignal, SignalRecord, SignalType } from '../interfaces'
+import { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/doc'
 import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
 import { uuidV4 } from '../utils/common'
 import { FALLBACK_ICE_SERVER_URL } from '../utils/constants'
@@ -21,9 +21,11 @@ class SwarmRtcTransport implements DocTransport {
   private errorHandler = ErrorHandler.getInstance()
   private logger = Logger.getInstance()
 
-  private swarmSignal: SwarmSignal
+  private swarmSignal: ISwarmSignal
   private swarmRtcPeers = new Map<string, RTCPeerConnection>()
+  /** sessionId per peer for correlating incoming answers to our outstanding offer. */
   private pendingOfferSessions = new Map<string, string>()
+  /** `"peerAddress:sessionId"` keys already answered — prevents double-answering the same offer. */
   private sentAnswerKeys = new Set<string>()
   private signalPollTimer: ReturnType<typeof setInterval> | null = null
   private signalCheckInFlight = false
@@ -66,7 +68,7 @@ class SwarmRtcTransport implements DocTransport {
     return origin === 'swarm-rtc'
   }
 
-  // Swarm-signaled WebRTC uses data channels for sync — no notification channel needed
+  // Yjs sync runs over data channels — subscribe/publish are unused
   subscribe(_topic: string, _handler: NotificationHandler): void {
     /** no-op */
   }
@@ -74,7 +76,6 @@ class SwarmRtcTransport implements DocTransport {
     /** no-op */
   }
 
-  /** Decides whether to initiate a WebRTC connection to a newly discovered peer. */
   connectToPeer(address: string): void {
     if (this.swarmRtcPeers.has(address)) {
       this.logger.debug(`${TAG} connectToPeer ${address.slice(0, 8)}… skipped — already connected`)
@@ -91,12 +92,11 @@ class SwarmRtcTransport implements DocTransport {
     // Answerers wait — startSignalPoll() will pick up the initiator's offer
   }
 
-  /** Deterministic role: lower address is always the initiator. Prevents duplicate connections. */
+  // Lower address is always the initiator — deterministic assignment prevents both peers from sending offers simultaneously.
   private isInitiatorFor(peerAddress: string): boolean {
     return this.deps.ownAddress < peerAddress
   }
 
-  /** Creates an RTCPeerConnection as the initiator, gathers ICE, publishes offer to signal feed. */
   private async initiateConnectionTo(peerAddress: string): Promise<void> {
     if (this.swarmRtcPeers.has(peerAddress)) {
       return
@@ -183,7 +183,6 @@ class SwarmRtcTransport implements DocTransport {
     this.logger.debug(`${TAG} offer written → ${peerAddress.slice(0, 8)}… sessionId=${sessionId.slice(0, 8)}`)
   }
 
-  /** Receives a peer's offer, creates an answer, publishes it to own signal feed. */
   private async answerPeerOffer(peerAddress: string, offer: SignalRecord): Promise<void> {
     if (this.swarmRtcPeers.has(peerAddress)) return
 
@@ -262,7 +261,6 @@ class SwarmRtcTransport implements DocTransport {
     this.logger.debug(`${TAG} answer written → ${peerAddress.slice(0, 8)}… sessionId=${offer.sessionId.slice(0, 8)}`)
   }
 
-  /** Polls each known peer's signal feed for offers (to answer) and answers (to finalise). */
   private startSignalPoll(): void {
     this.logger.debug(`${TAG} signal poll started (interval=${SIGNAL_POLL_INTERVAL_MS}ms)`)
     this.checkSignals()
@@ -295,11 +293,15 @@ class SwarmRtcTransport implements DocTransport {
   }
 
   private async checkPeerSignals(peerAddress: string): Promise<void> {
-    if (peerAddress === this.deps.ownAddress) return
+    if (peerAddress === this.deps.ownAddress) {
+      return
+    }
 
     const pc = this.swarmRtcPeers.get(peerAddress)
 
-    if (pc?.connectionState === 'connected') return
+    if (pc?.connectionState === 'connected') {
+      return
+    }
 
     const payload = await this.swarmSignal.read(peerAddress)
 
@@ -393,7 +395,6 @@ class SwarmRtcTransport implements DocTransport {
     }
   }
 
-  /** Sets up Yjs sync over an open WebRTC data channel. */
   private setupDataChannel(peerAddress: string, channel: RTCDataChannel): void {
     this.logger.debug(`${TAG} channel OPEN with ${peerAddress.slice(0, 8)}…`)
     this.deps.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
@@ -456,17 +457,14 @@ class SwarmRtcTransport implements DocTransport {
 /**
  * Creates a `DocTransportFactory` using Swarm-signaled WebRTC for peer-to-peer sync.
  *
- * WebRTC SDP offer/answer records are written to and read from each peer's
- * `<topic>_signal` Swarm mutable feed, eliminating the need for a central signaling server.
- * ICE gathering runs to completion before the SDP is written, so candidates are embedded
- * in the SDP itself rather than sent incrementally.
+ * SDP offer/answer records are written to each peer's `_signal` Swarm mutable feed,
+ * eliminating the need for a central signaling server. ICE gathering completes before
+ * the SDP is written, so candidates are embedded rather than sent incrementally.
  *
- * Role assignment is deterministic: the peer with the lower Ethereum address always
- * acts as the WebRTC initiator, preventing duplicate connection attempts.
+ * Role assignment is deterministic: the peer with the lower Ethereum address is always
+ * the initiator, preventing duplicate connections.
  *
- * `subscribe` and `publish` are no-ops: Yjs updates flow over WebRTC data channels.
- * A `NotificationPayload` transport (e.g. `createSwarmFeedTransport`) should be used
- * alongside this to handle join notifications and snapshot hints for offline peers.
+ * `subscribe` and `publish` are no-ops — Yjs updates flow directly over WebRTC data channels.
  *
  * @param stunUrl Primary STUN server URL (e.g. `"stun:stun.l.google.com:19302"`).
  * @param iceServers Optional full ICE server list. Overrides the default STUN pair when provided.

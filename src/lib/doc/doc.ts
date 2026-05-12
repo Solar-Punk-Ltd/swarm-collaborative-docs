@@ -8,12 +8,13 @@ import {
 } from '@solarpunkltd/comment-system'
 import * as Y from 'yjs'
 
-import { DocSettings, DocTransport, NotificationHandler, NotificationPayload } from '../interfaces'
+import { DocSettings, DocTransport, IMembers, ISwarmDoc, NotificationHandler, NotificationPayload } from '../interfaces'
 import { validateStamps } from '../utils/bee'
 import { decode, encode, indexStrToBigint, remove0x, retryAwaitableAsync, uuidV4 } from '../utils/common'
 import { API_VERSION, DOC_FEED_SUFFIX, PLACEHOLDER_STAMP } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
 import { EventEmitter } from '../utils/eventEmitter'
+import { Logger } from '../utils/logger'
 
 import { DOC_EVENTS } from './events'
 import { Members } from './members'
@@ -23,26 +24,8 @@ const DEBOUNCE_MS = 500
 const DEFAULT_MEMBER_LIST_POLL_INTERVAL_MS = 5000
 const MIN_TTL_WARN_DAYS = 2
 
-/**
- * Collaborative Yjs document backed by Swarm persistent storage.
- *
- * Each peer writes full Yjs state snapshots to their own per-user Swarm feed and
- * broadcasts incremental deltas to online peers via the configured `DocTransport`.
- * On startup, snapshots from all known peers are fetched and merged, so late-joining
- * peers converge to the same state without any central server.
- *
- * Lifecycle:
- * ```ts
- * const swarmDoc = new SwarmDoc(settings)
- * swarmDoc.start()                    // begins transport, snapshot fetch, member poll
- * // ... use swarmDoc.doc (Y.Doc) ...
- * swarmDoc.stop()                     // tears down transport and timers
- * ```
- */
-export class SwarmDoc {
-  /** The underlying Yjs document. Bind editors directly to this instance. */
+export class SwarmDoc implements ISwarmDoc {
   public readonly doc: Y.Doc
-
   private errorHandler = ErrorHandler.getInstance()
   private emitter: EventEmitter
   private signer: PrivateKey
@@ -54,7 +37,7 @@ export class SwarmDoc {
   private transport: DocTransport
   private beeApiUrl: string
   private mutableStampId: string
-  private members: Members
+  private members: IMembers
 
   private pendingUpdates: Uint8Array[] = []
   private debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -63,6 +46,7 @@ export class SwarmDoc {
   private memberListPollTimer: ReturnType<typeof setInterval> | null = null
   private localCursor: { anchor: number; head: number } | null = null
   private cursorTimer: ReturnType<typeof setInterval> | null = null
+  private readonly logger = Logger.getInstance()
 
   constructor(settings: DocSettings) {
     this.doc = new Y.Doc()
@@ -106,7 +90,6 @@ export class SwarmDoc {
     }
   }
 
-  // Derive comment-system options for own doc feed
   private ownFeedOptions(): Options {
     return {
       identifier: Topic.fromString(this.docFeedId + this.ownAddress).toString(),
@@ -117,7 +100,6 @@ export class SwarmDoc {
     }
   }
 
-  // Derive comment-system options for reading a peer's doc feed
   private memberFeedOptions(address: string): Options {
     return {
       identifier: Topic.fromString(this.docFeedId + address).toString(),
@@ -127,24 +109,18 @@ export class SwarmDoc {
     }
   }
 
-  // Register a peer address so we can read their doc feed. No-op if already registered.
   private registerMember(address: string, username: string): void {
     if (!this.members.register(address, username)) {
       return
     }
 
     this.transport.connectToPeer(address)
-    console.debug(`${TAG} registerMember: ${address.slice(0, 8)}…`)
+    this.logger.debug(`${TAG} registerMember: ${address.slice(0, 8)}…`)
   }
 
-  /**
-   * Starts the transport, subscribes to the doc topic, fetches peer snapshots,
-   * and begins the member-list poll. Call once after constructing `SwarmDoc`.
-   */
   public start(): void {
     this.transport.start()
 
-    // Collect incremental Yjs updates; debounce into a single publish.
     this.doc.on('update', (update: Uint8Array, origin: unknown) => {
       if (this.isRemoteOrigin(origin)) {
         return
@@ -170,22 +146,14 @@ export class SwarmDoc {
     this.startCursorBroadcast()
   }
 
-  /**
-   * Updates the local cursor position in the shared `Y.Text` and schedules a broadcast.
-   * Call this from the editor's selection-change handler.
-   *
-   * @param cursor Character index offsets `{ anchor, head }`, or `null` to clear.
-   */
   public updateCursor(cursor: { anchor: number; head: number } | null): void {
     this.localCursor = cursor
   }
 
-  // Returns true for any origin that should not trigger a Swarm publish or RTC forward.
   private isRemoteOrigin(origin: unknown): boolean {
     return origin === 'remote' || (this.transport.isRemoteOrigin(origin) ?? false)
   }
 
-  /** Stops the transport, clears all timers, and destroys the Yjs document. */
   public stop(): void {
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
 
@@ -205,7 +173,6 @@ export class SwarmDoc {
     this.doc.destroy()
   }
 
-  /** Returns the event emitter. Subscribe to `DOC_EVENTS` constants for doc lifecycle events. */
   public getEmitter(): EventEmitter {
     return this.emitter
   }
@@ -213,7 +180,6 @@ export class SwarmDoc {
   private applyYjsBytes(b64: string, label: string): void {
     try {
       const bytes = decode(b64)
-      console.log(`${TAG} applyYjsBytes [${label}] bytes: ${bytes.length}`)
       Y.applyUpdate(this.doc, bytes, 'remote')
       this.emitter.emit(DOC_EVENTS.DOC_UPDATED, this.doc)
     } catch (err) {
@@ -228,8 +194,6 @@ export class SwarmDoc {
       return
     }
 
-    // Drain the pending queue atomically — snapshot is always full state,
-    // so accumulated updates only affect the delta sent to online peers.
     const allUpdates = [...capturedUpdates, ...this.pendingUpdates]
     this.pendingUpdates = []
     this.publishInFlight = true
@@ -239,11 +203,10 @@ export class SwarmDoc {
       const delta = encode(Y.mergeUpdates(allUpdates))
 
       const nextIndex = this.ownIndex === -1n ? 0n : this.ownIndex + 1n
-      console.log(
+      this.logger.debug(
         `${TAG} publishSnapshot → index: ${nextIndex}, snapshot: ${(snapshot.length * 0.75) | 0}B, delta: ${(delta.length * 0.75) | 0}B`,
       )
 
-      // TODO: sign messages
       const messageObj: MessageData = {
         id: uuidV4(),
         username: this.username,
@@ -258,7 +221,6 @@ export class SwarmDoc {
 
       await writeDoc(messageObj, FeedIndex.fromBigInt(nextIndex), this.ownFeedOptions())
       this.ownIndex = nextIndex
-      console.log(`${TAG} publishSnapshot ✓ index: ${this.ownIndex}`)
 
       const deltaBytes = decode(delta)
       const sig = this.signer.sign(deltaBytes).toHex()
@@ -279,7 +241,6 @@ export class SwarmDoc {
     } finally {
       this.publishInFlight = false
 
-      // If more updates arrived while we were publishing, flush them
       if (this.pendingUpdates.length > 0) {
         const next = [...this.pendingUpdates]
         this.pendingUpdates = []
@@ -289,10 +250,9 @@ export class SwarmDoc {
   }
 
   private async init(): Promise<void> {
-    console.log(`${TAG} init: starting`)
     try {
       await validateStamps(this.beeApiUrl, this.mutableStampId, MIN_TTL_WARN_DAYS, true, msg => {
-        console.warn(`${TAG} ${msg}`)
+        this.logger.warn(`${TAG} ${msg}`)
         this.emitter.emit(DOC_EVENTS.DOC_ERROR, new Error(msg))
       })
     } catch (err) {
@@ -302,37 +262,30 @@ export class SwarmDoc {
       return
     }
     await Promise.allSettled([this.initOwnIndex(), this.initMemberList()])
-    console.log(`${TAG} init: done — ownIndex: ${this.ownIndex}`)
+    this.logger.debug(`${TAG} init: done — ownIndex: ${this.ownIndex}`)
 
-    // No peers at init time — editor is immediately usable, no WebRTC handshake needed
     if (this.members.all().size === 0) {
       this.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
     }
   }
 
   private async initOwnIndex(): Promise<void> {
-    console.log(`${TAG} initOwnIndex: reading own feed`)
     const comment = await retryAwaitableAsync(() => readDoc(undefined, this.ownFeedOptions()), 5, 500)
 
     if (!comment) {
-      console.log(`${TAG} initOwnIndex: no previous writes, starting fresh`)
-
       return
     }
 
     const parsedIx = indexStrToBigint(comment.index)
-    console.log(`${TAG} initOwnIndex: latest index on Swarm = ${parsedIx ?? 'none'}`)
+    this.logger.debug(`${TAG} initOwnIndex: latest index on Swarm = ${parsedIx ?? 'none'}`)
 
     if (parsedIx !== undefined && !FeedIndex.fromBigInt(parsedIx).equals(FeedIndex.MINUS_ONE)) {
       this.ownIndex = parsedIx
-      console.log(`${TAG} initOwnIndex: restoring own snapshot at index ${parsedIx}`)
       this.applyYjsBytes(comment.message, `own idx=${parsedIx}`)
     }
   }
 
   private async initMemberList(): Promise<void> {
-    // Register own address in the consensus memberList, then fetch latest state
-    // from every peer listed there (merged with any statically configured members).
     const membersList = await this.members.add(this.ownAddress, this.username)
     for (const [addr, username] of membersList) {
       if (addr !== this.ownAddress) {
@@ -342,7 +295,6 @@ export class SwarmDoc {
 
     this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
 
-    // Announce presence to online peers
     this.transport.publish({
       type: 'join',
       v: API_VERSION,
@@ -350,19 +302,17 @@ export class SwarmDoc {
       author: this.ownAddress,
       username: this.username,
     })
-    console.log(`${TAG} initMemberList: join notification sent`)
 
     const members = this.members.all()
-    console.log(`${TAG} initMemberList: ${members.size} peer(s) to fetch`)
+    this.logger.debug(`${TAG} initMemberList: ${members.size} peer(s) to fetch`)
     const memberPromises: Promise<void>[] = []
     members.forEach((addr: string, _username: string) => memberPromises.push(this.fetchLatestFromMember(addr)))
     await Promise.allSettled(memberPromises)
   }
 
-  // Dispatcher: routes to the fast (delta) or slow (Swarm fetch) path.
   private async fetchLatestFromMember(memberAddress: string, targetIndex?: bigint, delta?: string): Promise<void> {
     if (!this.members.has(memberAddress)) {
-      console.log(`${TAG} fetchLatestFromMember: ${memberAddress.slice(0, 8)}… not registered, skipping`)
+      this.logger.debug(`${TAG} fetchLatestFromMember: ${memberAddress.slice(0, 8)}… not registered, skipping`)
 
       return
     }
@@ -380,12 +330,11 @@ export class SwarmDoc {
     }
   }
 
-  // Fast path: notification carries the delta — apply directly, no Swarm read needed.
   private applyDelta(memberAddress: string, targetIndex: bigint, delta: string): void {
     const lastKnown = this.members.lastIndex(memberAddress)
 
     if (targetIndex <= lastKnown) {
-      console.log(`${TAG} applyDelta: ${memberAddress.slice(0, 8)}… idx=${targetIndex} already applied`)
+      this.logger.debug(`${TAG} applyDelta: ${memberAddress.slice(0, 8)}… idx=${targetIndex} already applied`)
 
       return
     }
@@ -394,7 +343,6 @@ export class SwarmDoc {
     this.applyYjsBytes(delta, `${memberAddress.slice(0, 8)} delta idx=${targetIndex}`)
   }
 
-  // Slow path: read snapshot from Swarm (init phase, or notification had no delta).
   private async fetchSnapshot(memberAddress: string, targetIndex?: bigint): Promise<void> {
     const lastKnown = this.members.lastIndex(memberAddress)
     const options = this.memberFeedOptions(memberAddress)
@@ -404,11 +352,13 @@ export class SwarmDoc {
     if (targetIndex !== undefined) {
       if (targetIndex <= lastKnown) return
 
-      console.log(`${TAG} fetchSnapshot: ${memberAddress.slice(0, 8)}… waiting for idx=${targetIndex} on Swarm`)
+      this.logger.debug(`${TAG} fetchSnapshot: ${memberAddress.slice(0, 8)}… waiting for idx=${targetIndex} on Swarm`)
       comment = await retryAwaitableAsync(() => readDoc(FeedIndex.fromBigInt(targetIndex), options), 5, 500)
 
       if (!comment) {
-        console.log(`${TAG} fetchSnapshot: ${memberAddress.slice(0, 8)}… idx=${targetIndex} unavailable after retries`)
+        this.logger.warn(
+          `${TAG} fetchSnapshot: ${memberAddress.slice(0, 8)}… idx=${targetIndex} unavailable after retries`,
+        )
 
         return
       }
@@ -417,7 +367,7 @@ export class SwarmDoc {
     } else {
       comment = await retryAwaitableAsync(() => readDoc(undefined, options), 3, 500)
       const parsedIx = indexStrToBigint(comment?.index)
-      console.log(
+      this.logger.debug(
         `${TAG} fetchSnapshot: ${memberAddress.slice(0, 8)}… latestOnSwarm=${parsedIx ?? 'none'} lastKnown=${lastKnown}`,
       )
 
@@ -430,23 +380,16 @@ export class SwarmDoc {
     this.applyYjsBytes(comment.message, `${memberAddress.slice(0, 8)} snapshot idx=${targetIx}`)
   }
 
-  /**
-   * Reads the Swarm consensus member list and registers any newly discovered peers.
-   * Call this to proactively discover peers without waiting for the periodic poll.
-   */
   public async refreshMemberList(): Promise<void> {
     try {
       const members = await this.members.read()
 
-      console.log(`${TAG} refreshMemberList members: `, members)
-
       if (!members || members.size === 0 || Object.keys(members).length === 0) {
-        console.log(`${TAG} refreshMemberList: empty member list`)
+        this.logger.debug(`${TAG} refreshMemberList: empty member list`)
 
         return
       }
 
-      console.log(`${TAG} refreshMemberList: got [${Array.from(Object.keys(members)).join(', ')}]`)
       let changed = false
       for (const [addr, username] of members) {
         if (addr !== this.ownAddress && !this.members.has(addr)) {
@@ -458,8 +401,6 @@ export class SwarmDoc {
 
       if (changed) {
         this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
-      } else {
-        console.log(`${TAG} refreshMemberList: no new members`)
       }
     } catch (err) {
       this.errorHandler.handleError(err, `${TAG}.refreshMemberList`)
@@ -486,7 +427,7 @@ export class SwarmDoc {
 
         if (changed) this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
       } catch {
-        // silent — memberList unavailable is not fatal
+        // no-op
       }
     }, DEFAULT_MEMBER_LIST_POLL_INTERVAL_MS)
   }
@@ -496,8 +437,7 @@ export class SwarmDoc {
 
     this.fetchProcessRunning = true
 
-    console.log(`${TAG} subscribing to topic: ${this.docTopic}`)
-    console.log(`${TAG} known members: ${Array.from(Object.keys(this.members.all())).join(', ') || '(none)'}`)
+    this.logger.log(`${TAG} subscribing to topic: ${this.docTopic}`)
 
     const handler: NotificationHandler = (payload: NotificationPayload): void => {
       const author = remove0x(payload.author.toLowerCase())
@@ -505,7 +445,7 @@ export class SwarmDoc {
       if (author === this.ownAddress) return
 
       if (payload.type === 'join') {
-        console.log(`${TAG} notification: join from ${author.slice(0, 8)}…`)
+        this.logger.debug(`${TAG} notification: join from ${author.slice(0, 8)}…`)
         this.registerMember(author, payload.username)
         this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
         this.fetchLatestFromMember(author)
@@ -524,19 +464,19 @@ export class SwarmDoc {
       }
 
       if (payload.type !== 'doc') {
-        console.warn(`${TAG} unknown payload type from ${author.slice(0, 8)}…`)
+        this.logger.warn(`${TAG} unknown payload type from ${author.slice(0, 8)}…`)
 
         return
       }
 
       if (!payload.delta) {
-        console.warn(`${TAG} dropping message from ${author.slice(0, 8)}…, no delta provided`)
+        this.logger.warn(`${TAG} dropping message from ${author.slice(0, 8)}…, no delta provided`)
 
         return
       }
 
       if (!payload.sig) {
-        console.warn(`${TAG} dropping unsigned delta from ${author.slice(0, 8)}…`)
+        this.logger.warn(`${TAG} dropping unsigned delta from ${author.slice(0, 8)}…`)
 
         return
       }
@@ -545,17 +485,17 @@ export class SwarmDoc {
         const valid = new Signature(payload.sig).isValid(decode(payload.delta), author)
 
         if (!valid) {
-          console.warn(`${TAG} dropping delta with invalid signature from ${author.slice(0, 8)}…`)
+          this.logger.warn(`${TAG} dropping delta with invalid signature from ${author.slice(0, 8)}…`)
 
           return
         }
       } catch {
-        console.warn(`${TAG} signature verification error from ${author.slice(0, 8)}… — dropping`)
+        this.logger.warn(`${TAG} signature verification error from ${author.slice(0, 8)}… — dropping`)
 
         return
       }
 
-      console.log(
+      this.logger.debug(
         `${TAG} notification: author=${author.slice(0, 8)}…, feedIndex=${payload.feedIndex}, hasDelta=${Boolean(payload.delta)}`,
       )
       this.fetchLatestFromMember(author, BigInt(payload.feedIndex), payload.delta)

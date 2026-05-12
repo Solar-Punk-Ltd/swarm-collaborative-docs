@@ -1,14 +1,5 @@
 /**
  * Event names emitted by `SwarmDoc.getEmitter()`.
- *
- * ```ts
- * swarmDoc.getEmitter().on(DOC_EVENTS.DOC_UPDATED, (doc: Y.Doc) => ...)
- * swarmDoc.getEmitter().on(DOC_EVENTS.DOC_ERROR,   (err: Error) => ...)
- * swarmDoc.getEmitter().on(DOC_EVENTS.MEMBERS_UPDATED, (members: Map<string, string>) => ...)
- * swarmDoc.getEmitter().on(DOC_EVENTS.PEERS_CONNECTED, (connected: true) => ...)
- * swarmDoc.getEmitter().on(DOC_EVENTS.AWARENESS_UPDATED,
- *   (update: { address: string; username: string; cursor: { anchor: number; head: number } | null }) => ...)
- * ```
  */
 export const DOC_EVENTS = {
   /** Fired after every remote update is applied to the Yjs doc. Payload: `Y.Doc`. */

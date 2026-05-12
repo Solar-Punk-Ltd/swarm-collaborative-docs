@@ -12,11 +12,6 @@ export function remove0x(hex: string): string {
   return (hex.startsWith('0x') ? hex.slice(2) : hex).toLowerCase()
 }
 
-/**
- * Retries an async function with exponential backoff.
- * Delays double on each attempt: baseDelay, baseDelay*2, baseDelay*4, …
- * Throws (and logs) after all retries are exhausted.
- */
 export async function retryAwaitableAsync<T>(fn: () => Promise<T>, retries = 3, baseDelay = 250): Promise<T> {
   try {
     return await fn()
@@ -32,7 +27,6 @@ export async function retryAwaitableAsync<T>(fn: () => Promise<T>, retries = 3, 
   }
 }
 
-// Safely parse an index string that may be decimal or hex (legacy compatibility)
 export const indexStrToBigint = (indexStr?: string): bigint | undefined => {
   if (!indexStr) return undefined
 

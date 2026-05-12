@@ -19,7 +19,7 @@ import {
   MUTABLE_STAMP_KEY,
   TOPIC_KEY,
 } from '../../utils/constants'
-import { colorForAddress } from '../../utils/peerColor'
+import { colorForAddress } from '../../utils/peers'
 import { Session, Transport, TRANSPORT_LABELS } from '../../utils/types'
 import { DocEditor } from '../DocEditor/DocEditor'
 

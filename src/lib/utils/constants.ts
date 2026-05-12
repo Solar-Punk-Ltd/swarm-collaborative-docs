@@ -1,8 +1,6 @@
 import { FeedIndex } from '@ethersphere/bee-js'
 
-/** Current protocol version string included in every `NotificationPayload`. */
 export const API_VERSION = 'v1'
-/** Placeholder postage batch ID used in test/dev environments where stamps are not required. */
 export const PLACEHOLDER_STAMP = '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 export const FEED_INDEX_ZERO = FeedIndex.fromBigInt(0n)
 /** Feed ID suffix for per-user document snapshot feeds: `<topic>_doc<address>`. */

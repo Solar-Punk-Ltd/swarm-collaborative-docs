@@ -6,7 +6,7 @@ import { useSession } from '../hooks/useSession'
 import { DISABLE_UNTIL_CONNECTED_KEY, TOPIC_KEY, TRANSPORT_KEY } from '../utils/constants'
 import { loadBeeUrl, loadDisableUntilConnected, loadMutableStamp, loadTopic, loadUsername } from '../utils/localStorage'
 
-const TestPage: React.FC = () => {
+const App: React.FC = () => {
   const { session, login, logout } = useSession()
 
   const docIdParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('doc') : null
@@ -71,4 +71,4 @@ const TestPage: React.FC = () => {
   )
 }
 
-export default TestPage
+export default App

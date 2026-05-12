@@ -10,7 +10,7 @@ import {
 } from '@waku/sdk'
 
 import { DOC_EVENTS } from '../doc/events'
-import type { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/docTransport'
+import type { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/doc'
 import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
 import { ErrorHandler } from '../utils/error'
 import { Logger } from '../utils/logger'
@@ -26,12 +26,8 @@ class WakuDocTransport implements DocTransport {
   private logger = Logger.getInstance()
   private node: LightNode | null = null
   private stopped = false
-
-  // Buffered until node is ready
   private pendingSubscription: { topic: string; handler: NotificationHandler } | null = null
   private pendingPublishes: NotificationPayload[] = []
-
-  // Set once subscription is established; reused for all sends
   private encoder: ReturnType<typeof createEncoder> | null = null
 
   constructor(
@@ -70,7 +66,7 @@ class WakuDocTransport implements DocTransport {
     }
   }
 
-  // Waku handles peer routing — no per-peer setup needed
+  // Waku handles peer routing internally
   connectToPeer(_address: string): void {}
 
   isRemoteOrigin(_origin: unknown): boolean {
@@ -178,16 +174,12 @@ class WakuDocTransport implements DocTransport {
 /**
  * Creates a `DocTransportFactory` using the Waku network for real-time notifications.
  *
- * Spins up a Waku light node that connects to the decentralised Waku network via
- * libp2p gossipsub. Outgoing payloads are sent with LightPush; incoming messages are
- * received via the Filter protocol (push-based, low latency).
+ * Spins up a Waku light node connected to the decentralised network via libp2p gossipsub.
+ * Outgoing payloads use LightPush; incoming messages arrive via the Filter protocol.
+ * `subscribe` and `publish` calls made before the node is ready are buffered and drained
+ * automatically. `DOC_EVENTS.PEERS_CONNECTED` is emitted once the node is healthy.
  *
- * Node initialisation is asynchronous. `subscribe` and `publish` calls made before
- * the node is ready are buffered and drained automatically once the node connects.
- * `DOC_EVENTS.PEERS_CONNECTED` is emitted when the node reaches a healthy state.
- *
- * @param bootstrapPeers Optional list of libp2p multiaddr bootstrap peers.
- *   When omitted, the Waku default bootstrap set is used (`defaultBootstrap: true`).
+ * @param bootstrapPeers Optional libp2p multiaddr bootstrap peers. Defaults to Waku's public bootstrap set.
  */
 export function createWakuTransport(bootstrapPeers?: string[]): DocTransportFactory {
   return (deps: DocTransportDeps) => new WakuDocTransport(deps, bootstrapPeers)

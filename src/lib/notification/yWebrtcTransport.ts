@@ -1,6 +1,6 @@
 import { WebrtcProvider } from 'y-webrtc'
 
-import { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/docTransport'
+import { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/doc'
 import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
 import { remove0x } from '../utils/common'
 import { Logger } from '../utils/logger'
@@ -57,13 +57,9 @@ class YWebrtcTransport implements DocTransport {
   // y-webrtc manages peer connections automatically via the signaling server
   connectToPeer(_address: string): void {}
 
-  // y-webrtc propagates updates via data channels — no notification publish needed
-  subscribe(_topic: string, _handler: NotificationHandler): void {
-    /** no-op */
-  }
-  publish(_payload: NotificationPayload): void {
-    /** no-op */
-  }
+  // y-webrtc propagates updates via data channels — subscribe/publish are unused
+  subscribe(_topic: string, _handler: NotificationHandler): void {}
+  publish(_payload: NotificationPayload): void {}
 
   isRemoteOrigin(origin: unknown): boolean {
     return this.provider !== null && origin === this.provider
@@ -73,15 +69,13 @@ class YWebrtcTransport implements DocTransport {
 /**
  * Creates a `DocTransportFactory` using y-webrtc for real-time peer-to-peer sync.
  *
- * Establishes WebRTC data channels through a WebSocket signaling server (e.g. a
- * y-webrtc-compatible relay). Peer discovery is automatic via the `awareness` protocol —
- * no explicit `connectToPeer` calls are needed.
+ * Establishes WebRTC data channels via a WebSocket signaling server. Peer discovery
+ * is automatic via the y-webrtc `awareness` protocol — no explicit `connectToPeer`
+ * calls are needed. New peers are surfaced via `deps.onPeerDiscovered`, triggering a
+ * Swarm snapshot fetch for any history written while the peer was offline.
  *
- * Newly discovered peers are surfaced via `deps.onPeerDiscovered`, triggering a Swarm
- * snapshot fetch so document history written while the peer was offline is recovered.
- *
- * `subscribe` and `publish` are no-ops: y-webrtc propagates Yjs updates over data channels
- * internally and also handles cross-tab sync via its built-in BroadcastChannel.
+ * `subscribe` and `publish` are no-ops — y-webrtc handles Yjs sync and cross-tab
+ * BroadcastChannel internally.
  *
  * @param signalingUrl WebSocket URL of the signaling server.
  * @param iceServers Optional custom ICE server list. Falls back to public STUN if omitted.

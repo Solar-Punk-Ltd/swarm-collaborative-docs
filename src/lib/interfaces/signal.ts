@@ -25,3 +25,23 @@ export interface SignalRecord {
 export interface SignalFeedPayload {
   records: SignalRecord[]
 }
+
+/**
+ * Reads and writes WebRTC signaling records to a per-user Swarm mutable feed.
+ *
+ * Writes are serialised to prevent index conflicts when `clearOwn` and `writeRecord` run concurrently.
+ * Used exclusively by `SwarmRtcTransport`.
+ */
+export interface ISwarmSignal {
+  /** Reads the signal feed for any peer. Returns `null` if the feed doesn't exist or has no new data. */
+  read(peerAddress: string): Promise<SignalFeedPayload | null>
+
+  /**
+   * Appends or replaces a signal record in own feed.
+   * Deduplication key: `type + toAddress` — only one active offer/answer per peer.
+   */
+  writeRecord(record: SignalRecord): Promise<void>
+
+  /** Writes an empty payload to own feed, clearing all records from the previous session. */
+  clearOwn(): Promise<void>
+}

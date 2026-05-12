@@ -1,12 +1,12 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 
-import TestPage from './pages/TestPage'
+import App from './pages/App'
 
 // TODO: react strict mode closes the WS connection
 const root = createRoot(document.getElementById('root') as HTMLElement)
 root.render(
   // <React.StrictMode>
-  <TestPage />,
+  <App />,
   // </React.StrictMode>,
 )

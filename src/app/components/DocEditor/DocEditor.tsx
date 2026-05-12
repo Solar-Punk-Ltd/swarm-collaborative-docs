@@ -2,63 +2,9 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
 
 import { AwarenessState } from '../../hooks/useSwarmDoc'
-import { colorForAddress } from '../../utils/peerColor'
+import { colorForAddress, getCaretXY } from '../../utils/peers'
 
 import './DocEditor.scss'
-
-// Mirror-div technique: measure pixel coordinates of a character offset in a textarea.
-// Returns coordinates relative to the textarea's top-left padding origin.
-function getCaretXY(el: HTMLTextAreaElement, position: number): { top: number; left: number } {
-  const style = window.getComputedStyle(el)
-  const div = document.createElement('div')
-
-  const props = [
-    'boxSizing',
-    'width',
-    'paddingTop',
-    'paddingRight',
-    'paddingBottom',
-    'paddingLeft',
-    'borderTopWidth',
-    'borderRightWidth',
-    'borderBottomWidth',
-    'borderLeftWidth',
-    'fontFamily',
-    'fontSize',
-    'fontWeight',
-    'fontStyle',
-    'fontVariant',
-    'lineHeight',
-    'letterSpacing',
-    'wordSpacing',
-    'textTransform',
-    'textIndent',
-    'whiteSpace',
-    'wordBreak',
-    'wordWrap',
-    'tabSize',
-  ] as const
-
-  div.style.position = 'absolute'
-  div.style.visibility = 'hidden'
-  div.style.top = '-9999px'
-  div.style.left = '-9999px'
-  div.style.overflow = 'hidden'
-  props.forEach(p => {
-    div.style[p as never] = style[p as never]
-  })
-
-  const text = el.value.slice(0, position)
-  div.textContent = text || ' '
-  const span = document.createElement('span')
-  span.textContent = el.value[position] ?? ' '
-  div.appendChild(span)
-  document.body.appendChild(div)
-  const coords = { top: span.offsetTop, left: span.offsetLeft }
-  document.body.removeChild(div)
-
-  return coords
-}
 
 function commonPrefixLen(a: string, b: string): number {
   let i = 0
@@ -114,12 +60,17 @@ export const DocEditor: React.FC<DocEditorProps> = ({ doc, disabled = false, awa
   const [badges, setBadges] = useState<CursorBadge[]>([])
 
   useEffect(() => {
-    if (!doc) return
+    if (!doc) {
+      return
+    }
+
     const yText = doc.getText('content')
     yTextRef.current = yText
     const initial = yText.toString()
     prevContentRef.current = initial
+
     setContent(initial)
+
     const observer = () => {
       const text = yText.toString()
       prevContentRef.current = text
@@ -130,7 +81,6 @@ export const DocEditor: React.FC<DocEditorProps> = ({ doc, disabled = false, awa
     return () => yText.unobserve(observer)
   }, [doc])
 
-  // Recompute badge positions whenever awareness or content changes
   useLayoutEffect(() => {
     const el = textareaRef.current
 
@@ -165,12 +115,18 @@ export const DocEditor: React.FC<DocEditorProps> = ({ doc, disabled = false, awa
   const reportCursor = () => {
     const el = textareaRef.current
 
-    if (!el || !onCursorChange) return
+    if (!el || !onCursorChange) {
+      return
+    }
+
     onCursorChange({ anchor: el.selectionStart, head: el.selectionEnd })
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    if (!yTextRef.current || !doc) return
+    if (!yTextRef.current || !doc) {
+      return
+    }
+
     const newValue = e.target.value
     const oldValue = prevContentRef.current
     prevContentRef.current = newValue
