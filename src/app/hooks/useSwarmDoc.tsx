@@ -1,18 +1,25 @@
-import { DOC_EVENTS, DocSettings, SwarmDoc } from 'lib'
+import { DOC_EVENTS, DocSettings, ISwarmDoc, SwarmDoc } from 'lib'
 import { useEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
+export interface AwarenessState {
+  address: string
+  username: string
+  cursor: { anchor: number; head: number } | null
+}
 
 export interface SwarmDocContext {
   doc: Y.Doc | null
   error: Error | null
   members: Map<string, string> | null
   connected: boolean
+  awareness: Map<string, AwarenessState>
+  updateCursor: (cursor: { anchor: number; head: number } | null) => void
   refreshMemberList: () => void
   dismissError: () => void
 }
 
 export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
-  const docRef = useRef<SwarmDoc | null>(null)
+  const docRef = useRef<ISwarmDoc | null>(null)
   const [doc, setDoc] = useState<Y.Doc | null>(null)
   const [{ error, members, connected }, setStatus] = useState<{
     error: Error | null
@@ -23,6 +30,7 @@ export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
     members: null,
     connected: false,
   })
+  const [awareness, setAwareness] = useState<Map<string, AwarenessState>>(new Map())
 
   const dismissError = () => {
     setStatus(prev => (error ? { ...prev, error: null } : prev))
@@ -42,6 +50,9 @@ export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
       .getEmitter()
       .on(DOC_EVENTS.MEMBERS_UPDATED, (m: Map<string, string>) => setStatus(s => ({ ...s, members: m })))
     swarmDoc.getEmitter().on(DOC_EVENTS.PEERS_CONNECTED, () => setStatus(s => ({ ...s, connected: true })))
+    swarmDoc.getEmitter().on(DOC_EVENTS.AWARENESS_UPDATED, (update: AwarenessState) => {
+      setAwareness(prev => new Map(prev).set(update.address, update))
+    })
 
     swarmDoc.start()
     setDoc(swarmDoc.doc)
@@ -51,6 +62,7 @@ export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
       docRef.current = null
       setDoc(null)
       setStatus({ error: null, members: null, connected: false })
+      setAwareness(new Map())
     }
   }, [user, infra])
 
@@ -58,5 +70,9 @@ export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
     await docRef.current?.refreshMemberList()
   }
 
-  return { doc, error, members, connected, refreshMemberList, dismissError }
+  const updateCursor = (cursor: { anchor: number; head: number } | null) => {
+    docRef.current?.updateCursor(cursor)
+  }
+
+  return { doc, error, members, connected, awareness, updateCursor, refreshMemberList, dismissError }
 }

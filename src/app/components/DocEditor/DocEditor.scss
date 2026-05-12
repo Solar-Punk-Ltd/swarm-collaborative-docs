@@ -10,6 +10,7 @@ $swarm-text: #f8f8ff;
   flex-direction: column;
   height: 100%;
   background: $swarm-dark;
+  position: relative;
 
   &--loading {
     padding: 24px;
@@ -67,6 +68,35 @@ $swarm-text: #f8f8ff;
     &::selection {
       background: rgba(247, 104, 8, 0.25);
     }
+  }
+  &__cursor-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  &__cursor-line {
+    position: absolute;
+    width: 2px;
+    border-radius: 1px;
+    opacity: 0.85;
+  }
+
+  &__cursor-badge {
+    position: absolute;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    color: #fff;
+    padding: 1px 5px;
+    border-radius: 3px;
+    white-space: nowrap;
+    opacity: 0.92;
+    line-height: 16px;
   }
 }
 

@@ -1,13 +1,12 @@
-import React, { useCallback, useState } from 'react'
+import React, { useState } from 'react'
 
 import { LoginView } from '../components/LoginView/LoginView'
 import { SessionView } from '../components/SessionView/SessionView'
 import { useSession } from '../hooks/useSession'
 import { DISABLE_UNTIL_CONNECTED_KEY, TOPIC_KEY, TRANSPORT_KEY } from '../utils/constants'
 import { loadBeeUrl, loadDisableUntilConnected, loadMutableStamp, loadTopic, loadUsername } from '../utils/localStorage'
-import { Transport } from '../utils/types'
 
-const TestPage: React.FC = () => {
+const App: React.FC = () => {
   const { session, login, logout } = useSession()
 
   const docIdParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('doc') : null
@@ -26,19 +25,12 @@ const TestPage: React.FC = () => {
   const [mutableStamp, setMutableStamp] = useState(loadMutableStamp())
   const [username, setUsername] = useState(loadUsername())
   const [isLoggedIn, setIsLoggedIn] = useState(false)
-  const [disableUntilConnected, setDisableUntilConnected] = useState(
-    session?.transport !== Transport.SWARM_FEED_POLL ? loadDisableUntilConnected() : false,
-  )
+  const [disableUntilConnected, setDisableUntilConnected] = useState(loadDisableUntilConnected())
 
-  const handleDisableUntilConnectedChange = useCallback(
-    (v: boolean) => {
-      if (session?.transport !== Transport.SWARM_FEED_POLL) {
-        setDisableUntilConnected(v)
-        localStorage.setItem(DISABLE_UNTIL_CONNECTED_KEY, String(v))
-      }
-    },
-    [session],
-  )
+  const handleDisableUntilConnectedChange = (v: boolean) => {
+    setDisableUntilConnected(v)
+    localStorage.setItem(DISABLE_UNTIL_CONNECTED_KEY, String(v))
+  }
 
   if (!isLoggedIn || !session) {
     return (
@@ -79,4 +71,4 @@ const TestPage: React.FC = () => {
   )
 }
 
-export default TestPage
+export default App

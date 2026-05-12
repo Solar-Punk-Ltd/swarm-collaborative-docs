@@ -10,9 +10,10 @@ import {
 } from '@waku/sdk'
 
 import { DOC_EVENTS } from '../doc/events'
-import type { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/docTransport'
+import type { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/doc'
 import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
 import { ErrorHandler } from '../utils/error'
+import { Logger } from '../utils/logger'
 
 const TAG = 'WakuTransport'
 
@@ -22,14 +23,11 @@ function contentTopicFor(topic: string): string {
 
 class WakuDocTransport implements DocTransport {
   private errorHandler = ErrorHandler.getInstance()
+  private logger = Logger.getInstance()
   private node: LightNode | null = null
   private stopped = false
-
-  // Buffered until node is ready
   private pendingSubscription: { topic: string; handler: NotificationHandler } | null = null
   private pendingPublishes: NotificationPayload[] = []
-
-  // Set once subscription is established; reused for all sends
   private encoder: ReturnType<typeof createEncoder> | null = null
 
   constructor(
@@ -68,7 +66,7 @@ class WakuDocTransport implements DocTransport {
     }
   }
 
-  // Waku handles peer routing — no per-peer setup needed
+  // Waku handles peer routing internally
   connectToPeer(_address: string): void {}
 
   isRemoteOrigin(_origin: unknown): boolean {
@@ -91,7 +89,7 @@ class WakuDocTransport implements DocTransport {
     }
 
     this.node = node
-    console.log(`${TAG} node connected`)
+    this.logger.log(`${TAG} node connected`)
     this.deps.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
 
     if (this.pendingSubscription) {
@@ -152,34 +150,36 @@ class WakuDocTransport implements DocTransport {
     this.node.filter
       .subscribe([decoder], callback)
       .then(ok => {
-        console.log(`${TAG} subscribed to ${contentTopic} ok=${ok}`)
+        this.logger.log(`${TAG} subscribed to ${contentTopic} ok=${ok}`)
       })
       .catch(err => this.errorHandler.handleError(err, `${TAG}.subscribe`))
   }
 
   private async sendPayload(payload: NotificationPayload): Promise<void> {
-    if (!this.node || !this.encoder) return
+    if (!this.node || !this.encoder) {
+      return
+    }
 
     const bytes = new TextEncoder().encode(JSON.stringify(payload))
-    const result = await this.node.lightPush.send(this.encoder, { payload: bytes })
 
-    console.log(`${TAG} sent successes=${result.successes.length} failures=${result.failures.length}`)
+    try {
+      const result = await this.node.lightPush.send(this.encoder, { payload: bytes })
+      this.logger.debug(`${TAG} send successes=${result.successes.length} failures=${result.failures.length}`)
+    } catch (err: unknown) {
+      this.logger.error(`${TAG} unknown send error=${err}`)
+    }
   }
 }
 
 /**
  * Creates a `DocTransportFactory` using the Waku network for real-time notifications.
  *
- * Spins up a Waku light node that connects to the decentralised Waku network via
- * libp2p gossipsub. Outgoing payloads are sent with LightPush; incoming messages are
- * received via the Filter protocol (push-based, low latency).
+ * Spins up a Waku light node connected to the decentralised network via libp2p gossipsub.
+ * Outgoing payloads use LightPush; incoming messages arrive via the Filter protocol.
+ * `subscribe` and `publish` calls made before the node is ready are buffered and drained
+ * automatically. `DOC_EVENTS.PEERS_CONNECTED` is emitted once the node is healthy.
  *
- * Node initialisation is asynchronous. `subscribe` and `publish` calls made before
- * the node is ready are buffered and drained automatically once the node connects.
- * `DOC_EVENTS.PEERS_CONNECTED` is emitted when the node reaches a healthy state.
- *
- * @param bootstrapPeers Optional list of libp2p multiaddr bootstrap peers.
- *   When omitted, the Waku default bootstrap set is used (`defaultBootstrap: true`).
+ * @param bootstrapPeers Optional libp2p multiaddr bootstrap peers. Defaults to Waku's public bootstrap set.
  */
 export function createWakuTransport(bootstrapPeers?: string[]): DocTransportFactory {
   return (deps: DocTransportDeps) => new WakuDocTransport(deps, bootstrapPeers)

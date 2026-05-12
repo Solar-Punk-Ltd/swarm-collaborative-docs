@@ -1,4 +1,4 @@
-import { DocTransportFactory } from './docTransport'
+import { DocTransportFactory } from './doc'
 
 /** Configuration passed to the `SwarmDoc` constructor. */
 export interface DocSettings {
@@ -25,10 +25,9 @@ export interface DocSettings {
     /** Pre-seeded peer Ethereum addresses with usernames. Merged with the Swarm consensus member list at init. */
     members?: Map<string, string>
     /**
-     * Transport factory. Determines how peers exchange notifications and/or sync state.
-     * Use one of the built-in factories:
-     * `createSwarmFeedTransport`, `createYWebrtcTransport`, `createSwarmRtcTransport`,
-     * `createWakuTransport`, `createBroadcastChannelTransport`.
+     * Transport factory. Determines how peers exchange notifications and sync state.
+     * Built-in options: `createSwarmPubSubTransport`, `createSwarmRtcTransport`,
+     * `createYWebrtcTransport`, `createWakuTransport`.
      */
     transport: DocTransportFactory
   }

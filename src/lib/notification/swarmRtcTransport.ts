@@ -1,12 +1,13 @@
 import * as Y from 'yjs'
 
 import { DOC_EVENTS } from '../doc/events'
-import { SignalRecord, SignalType } from '../interfaces'
-import { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/docTransport'
+import { ISwarmSignal, SignalRecord, SignalType } from '../interfaces'
+import { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/doc'
 import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
 import { uuidV4 } from '../utils/common'
 import { FALLBACK_ICE_SERVER_URL } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
+import { Logger } from '../utils/logger'
 
 import { SwarmSignal } from './swarmSignal'
 
@@ -18,10 +19,13 @@ const CHANNEL_BINARY_TYPE = 'arraybuffer'
 
 class SwarmRtcTransport implements DocTransport {
   private errorHandler = ErrorHandler.getInstance()
+  private logger = Logger.getInstance()
 
-  private swarmSignal: SwarmSignal
+  private swarmSignal: ISwarmSignal
   private swarmRtcPeers = new Map<string, RTCPeerConnection>()
+  /** sessionId per peer for correlating incoming answers to our outstanding offer. */
   private pendingOfferSessions = new Map<string, string>()
+  /** `"peerAddress:sessionId"` keys already answered — prevents double-answering the same offer. */
   private sentAnswerKeys = new Set<string>()
   private signalPollTimer: ReturnType<typeof setInterval> | null = null
   private signalCheckInFlight = false
@@ -64,7 +68,7 @@ class SwarmRtcTransport implements DocTransport {
     return origin === 'swarm-rtc'
   }
 
-  // Swarm-signaled WebRTC uses data channels for sync — no notification channel needed
+  // Yjs sync runs over data channels — subscribe/publish are unused
   subscribe(_topic: string, _handler: NotificationHandler): void {
     /** no-op */
   }
@@ -72,16 +76,15 @@ class SwarmRtcTransport implements DocTransport {
     /** no-op */
   }
 
-  /** Decides whether to initiate a WebRTC connection to a newly discovered peer. */
   connectToPeer(address: string): void {
     if (this.swarmRtcPeers.has(address)) {
-      console.log(`${TAG} connectToPeer ${address.slice(0, 8)}… skipped — already connected`)
+      this.logger.debug(`${TAG} connectToPeer ${address.slice(0, 8)}… skipped — already connected`)
 
       return
     }
 
     const role = this.isInitiatorFor(address) ? 'initiator' : 'answerer'
-    console.log(`${TAG} connectToPeer ${address.slice(0, 8)}… role=${role}`)
+    this.logger.debug(`${TAG} connectToPeer ${address.slice(0, 8)}… role=${role}`)
 
     if (this.isInitiatorFor(address)) {
       this.initiateConnectionTo(address)
@@ -89,16 +92,15 @@ class SwarmRtcTransport implements DocTransport {
     // Answerers wait — startSignalPoll() will pick up the initiator's offer
   }
 
-  /** Deterministic role: lower address is always the initiator. Prevents duplicate connections. */
+  // Lower address is always the initiator — deterministic assignment prevents both peers from sending offers simultaneously.
   private isInitiatorFor(peerAddress: string): boolean {
     return this.deps.ownAddress < peerAddress
   }
 
-  /** Creates an RTCPeerConnection as the initiator, gathers ICE, publishes offer to signal feed. */
   private async initiateConnectionTo(peerAddress: string): Promise<void> {
-    if (this.swarmRtcPeers.has(peerAddress)) return
-
-    console.log(`${TAG} initiating → ${peerAddress.slice(0, 8)}…`)
+    if (this.swarmRtcPeers.has(peerAddress)) {
+      return
+    }
 
     const pc = new RTCPeerConnection({
       iceServers: this.iceServers?.length
@@ -108,12 +110,12 @@ class SwarmRtcTransport implements DocTransport {
     this.swarmRtcPeers.set(peerAddress, pc)
 
     pc.addEventListener('connectionstatechange', () => {
-      console.log(`${TAG} [initiator→${peerAddress.slice(0, 8)}] connectionState=${pc.connectionState}`)
+      this.logger.debug(`${TAG} [initiator→${peerAddress.slice(0, 8)}] connectionState=${pc.connectionState}`)
 
       if (pc.connectionState === 'failed') {
         this.swarmRtcPeers.delete(peerAddress)
         this.pendingOfferSessions.delete(peerAddress)
-        console.log(`${TAG} [initiator→${peerAddress.slice(0, 8)}] ICE failed — retrying in 10s`)
+        this.logger.debug(`${TAG} [initiator→${peerAddress.slice(0, 8)}] ICE failed — retrying in 10s`)
         setTimeout(() => {
           if (!this.stopped && !this.swarmRtcPeers.has(peerAddress)) {
             this.initiateConnectionTo(peerAddress).catch(err =>
@@ -128,11 +130,11 @@ class SwarmRtcTransport implements DocTransport {
     })
 
     pc.addEventListener('iceconnectionstatechange', () => {
-      console.log(`${TAG} [initiator→${peerAddress.slice(0, 8)}] iceConnectionState=${pc.iceConnectionState}`)
+      this.logger.debug(`${TAG} [initiator→${peerAddress.slice(0, 8)}] iceConnectionState=${pc.iceConnectionState}`)
     })
 
     pc.addEventListener('icecandidateerror', (e: RTCPeerConnectionIceErrorEvent) => {
-      console.warn(
+      this.logger.warn(
         `${TAG} [initiator→${peerAddress.slice(0, 8)}] ICE candidate error — url=${e.url} errorCode=${e.errorCode} errorText=${e.errorText}`,
       )
     })
@@ -140,27 +142,30 @@ class SwarmRtcTransport implements DocTransport {
     const dc = pc.createDataChannel('yjs')
 
     dc.addEventListener('open', () => this.setupDataChannel(peerAddress, dc))
-    dc.addEventListener('error', e => console.error(`${TAG} [initiator] dataChannel error`, e))
+    dc.addEventListener('error', e => this.logger.error(`${TAG} [initiator] dataChannel error`, e))
 
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
 
-    console.log(`${TAG} ICE gathering started for ${peerAddress.slice(0, 8)}…`)
+    this.logger.debug(`${TAG} ICE gathering started for ${peerAddress.slice(0, 8)}…`)
+
     await this.waitForIceGatheringComplete(pc)
 
     const sdp = pc.localDescription?.sdp ?? ''
     const candidateCount = (sdp.match(/^a=candidate:/gm) || []).length
-    console.log(`${TAG} ICE gathered for ${peerAddress.slice(0, 8)}… candidates=${candidateCount} sdpLen=${sdp.length}`)
+    this.logger.debug(
+      `${TAG} ICE gathered for ${peerAddress.slice(0, 8)}… candidates=${candidateCount} sdpLen=${sdp.length}`,
+    )
 
     if (this.stopped) {
       pc.close()
       this.swarmRtcPeers.delete(peerAddress)
-      console.log(`${TAG} initiateConnectionTo ${peerAddress.slice(0, 8)}… aborted — instance stopped`)
+      this.logger.debug(`${TAG} initiateConnectionTo ${peerAddress.slice(0, 8)}… aborted — instance stopped`)
 
       return
     }
 
-    console.log(`${TAG} initiateConnectionTo ${peerAddress.slice(0, 8)}… instance live, writing offer`)
+    this.logger.debug(`${TAG} initiateConnectionTo ${peerAddress.slice(0, 8)}… instance live, writing offer`)
     const sessionId = uuidV4()
     this.pendingOfferSessions.set(peerAddress, sessionId)
 
@@ -174,10 +179,10 @@ class SwarmRtcTransport implements DocTransport {
     }
 
     await this.swarmSignal.writeRecord(record)
-    console.log(`${TAG} offer written → ${peerAddress.slice(0, 8)}… sessionId=${sessionId.slice(0, 8)}`)
+
+    this.logger.debug(`${TAG} offer written → ${peerAddress.slice(0, 8)}… sessionId=${sessionId.slice(0, 8)}`)
   }
 
-  /** Receives a peer's offer, creates an answer, publishes it to own signal feed. */
   private async answerPeerOffer(peerAddress: string, offer: SignalRecord): Promise<void> {
     if (this.swarmRtcPeers.has(peerAddress)) return
 
@@ -185,7 +190,9 @@ class SwarmRtcTransport implements DocTransport {
 
     if (this.sentAnswerKeys.has(key)) return
 
-    console.log(`${TAG} answering offer from ${peerAddress.slice(0, 8)}… sessionId=${offer.sessionId.slice(0, 8)}`)
+    this.logger.debug(
+      `${TAG} answering offer from ${peerAddress.slice(0, 8)}… sessionId=${offer.sessionId.slice(0, 8)}`,
+    )
     this.sentAnswerKeys.add(key)
 
     const pc = new RTCPeerConnection({
@@ -196,7 +203,7 @@ class SwarmRtcTransport implements DocTransport {
     this.swarmRtcPeers.set(peerAddress, pc)
 
     pc.addEventListener('connectionstatechange', () => {
-      console.log(`${TAG} [answerer←${peerAddress.slice(0, 8)}] connectionState=${pc.connectionState}`)
+      this.logger.debug(`${TAG} [answerer←${peerAddress.slice(0, 8)}] connectionState=${pc.connectionState}`)
 
       if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
         this.swarmRtcPeers.delete(peerAddress)
@@ -204,39 +211,39 @@ class SwarmRtcTransport implements DocTransport {
     })
 
     pc.addEventListener('iceconnectionstatechange', () => {
-      console.log(`${TAG} [answerer←${peerAddress.slice(0, 8)}] iceConnectionState=${pc.iceConnectionState}`)
+      this.logger.debug(`${TAG} [answerer←${peerAddress.slice(0, 8)}] iceConnectionState=${pc.iceConnectionState}`)
     })
 
     pc.addEventListener('icecandidateerror', (e: RTCPeerConnectionIceErrorEvent) => {
-      console.warn(
+      this.logger.warn(
         `${TAG} [answerer←${peerAddress.slice(0, 8)}] ICE candidate error — url=${e.url} errorCode=${e.errorCode} errorText=${e.errorText}`,
       )
     })
 
     pc.addEventListener('datachannel', (event: RTCDataChannelEvent) => {
-      console.log(`${TAG} datachannel received from ${peerAddress.slice(0, 8)}…`)
+      this.logger.debug(`${TAG} datachannel received from ${peerAddress.slice(0, 8)}…`)
       const dc = event.channel
       dc.addEventListener('open', () => this.setupDataChannel(peerAddress, dc))
-      dc.addEventListener('error', e => console.error(`${TAG} [answerer] dataChannel error`, e))
+      dc.addEventListener('error', e => this.logger.error(`${TAG} [answerer] dataChannel error`, e))
     })
 
     await pc.setRemoteDescription({ type: SignalType.OFFER, sdp: offer.sdp })
     const answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
 
-    console.log(`${TAG} ICE gathering started (answerer) for ${peerAddress.slice(0, 8)}…`)
+    this.logger.debug(`${TAG} ICE gathering started (answerer) for ${peerAddress.slice(0, 8)}…`)
     await this.waitForIceGatheringComplete(pc)
 
     const sdp = pc.localDescription?.sdp ?? ''
     const candidateCount = (sdp.match(/^a=candidate:/gm) || []).length
-    console.log(
+    this.logger.debug(
       `${TAG} ICE gathered (answerer) for ${peerAddress.slice(0, 8)}… candidates=${candidateCount} sdpLen=${sdp.length}`,
     )
 
     if (this.stopped) {
       pc.close()
       this.swarmRtcPeers.delete(peerAddress)
-      console.log(`${TAG} answerPeerOffer ${peerAddress.slice(0, 8)}… aborted — instance stopped`)
+      this.logger.debug(`${TAG} answerPeerOffer ${peerAddress.slice(0, 8)}… aborted — instance stopped`)
 
       return
     }
@@ -251,12 +258,11 @@ class SwarmRtcTransport implements DocTransport {
     }
 
     await this.swarmSignal.writeRecord(record)
-    console.log(`${TAG} answer written → ${peerAddress.slice(0, 8)}… sessionId=${offer.sessionId.slice(0, 8)}`)
+    this.logger.debug(`${TAG} answer written → ${peerAddress.slice(0, 8)}… sessionId=${offer.sessionId.slice(0, 8)}`)
   }
 
-  /** Polls each known peer's signal feed for offers (to answer) and answers (to finalise). */
   private startSignalPoll(): void {
-    console.log(`${TAG} signal poll started (interval=${SIGNAL_POLL_INTERVAL_MS}ms)`)
+    this.logger.debug(`${TAG} signal poll started (interval=${SIGNAL_POLL_INTERVAL_MS}ms)`)
     this.checkSignals()
     this.signalPollTimer = setInterval(() => this.checkSignals(), SIGNAL_POLL_INTERVAL_MS)
   }
@@ -275,7 +281,9 @@ class SwarmRtcTransport implements DocTransport {
 
     const peerAddrs = Array.from(peers.keys())
 
-    console.log(`${TAG} checking signals for ${peers.size} peer(s): ${peerAddrs.map(a => a.slice(0, 8)).join(', ')}`)
+    this.logger.debug(
+      `${TAG} checking signals for ${peers.size} peer(s): ${peerAddrs.map(a => a.slice(0, 8)).join(', ')}`,
+    )
 
     try {
       await Promise.allSettled(peerAddrs.map(addr => this.checkPeerSignals(addr)))
@@ -285,25 +293,29 @@ class SwarmRtcTransport implements DocTransport {
   }
 
   private async checkPeerSignals(peerAddress: string): Promise<void> {
-    if (peerAddress === this.deps.ownAddress) return
+    if (peerAddress === this.deps.ownAddress) {
+      return
+    }
 
     const pc = this.swarmRtcPeers.get(peerAddress)
 
-    if (pc?.connectionState === 'connected') return
+    if (pc?.connectionState === 'connected') {
+      return
+    }
 
     const payload = await this.swarmSignal.read(peerAddress)
 
     if (!payload) {
-      console.log(`${TAG} no new signal from ${peerAddress.slice(0, 8)}…`)
+      this.logger.debug(`${TAG} no new signal from ${peerAddress.slice(0, 8)}…`)
 
       return
     }
 
-    console.log(`${TAG} signal feed for ${peerAddress.slice(0, 8)}… has ${payload.records.length} record(s)`)
+    this.logger.debug(`${TAG} signal feed for ${peerAddress.slice(0, 8)}… has ${payload.records.length} record(s)`)
 
     for (const record of payload.records) {
       const recordAgeS = Math.round((Date.now() - record.timestamp) / 1000)
-      console.log(
+      this.logger.debug(
         `${TAG}   record type=${record.type} to=${record.toAddress.slice(0, 8)} sessionId=${record.sessionId.slice(0, 8)} age=${recordAgeS}s`,
       )
 
@@ -318,7 +330,7 @@ class SwarmRtcTransport implements DocTransport {
     const ageMs = Date.now() - record.timestamp
 
     if (ageMs > OFFER_MAX_AGE_MS) {
-      console.log(`${TAG} skipping stale offer from ${peerAddress.slice(0, 8)}… age=${Math.round(ageMs / 1000)}s`)
+      this.logger.debug(`${TAG} skipping stale offer from ${peerAddress.slice(0, 8)}… age=${Math.round(ageMs / 1000)}s`)
 
       return
     }
@@ -326,13 +338,13 @@ class SwarmRtcTransport implements DocTransport {
     const key = `${peerAddress}:${record.sessionId}`
 
     if (this.swarmRtcPeers.has(peerAddress)) {
-      console.log(`${TAG} offer from ${peerAddress.slice(0, 8)}… skipped — already have PC`)
+      this.logger.debug(`${TAG} offer from ${peerAddress.slice(0, 8)}… skipped — already have PC`)
 
       return
     }
 
     if (this.sentAnswerKeys.has(key)) {
-      console.log(`${TAG} offer from ${peerAddress.slice(0, 8)}… skipped — already answered`)
+      this.logger.debug(`${TAG} offer from ${peerAddress.slice(0, 8)}… skipped — already answered`)
 
       return
     }
@@ -344,7 +356,9 @@ class SwarmRtcTransport implements DocTransport {
     const ageMs = Date.now() - record.timestamp
 
     if (ageMs > OFFER_MAX_AGE_MS) {
-      console.log(`${TAG} skipping stale answer from ${peerAddress.slice(0, 8)}… age=${Math.round(ageMs / 1000)}s`)
+      this.logger.debug(
+        `${TAG} skipping stale answer from ${peerAddress.slice(0, 8)}… age=${Math.round(ageMs / 1000)}s`,
+      )
 
       return
     }
@@ -352,7 +366,7 @@ class SwarmRtcTransport implements DocTransport {
     const pc = this.swarmRtcPeers.get(peerAddress)
     const expectedSession = this.pendingOfferSessions.get(peerAddress)
 
-    console.log(
+    this.logger.debug(
       `${TAG} answer from ${peerAddress.slice(0, 8)}… expectedSession=${expectedSession?.slice(0, 8) ?? 'none'} recordSession=${record.sessionId.slice(0, 8)} hasPC=${Boolean(pc)} alreadyAnswered=${Boolean(pc?.currentRemoteDescription)}`,
     )
 
@@ -361,14 +375,14 @@ class SwarmRtcTransport implements DocTransport {
     try {
       await pc.setRemoteDescription({ type: SignalType.ANSWER, sdp: record.sdp })
       this.pendingOfferSessions.delete(peerAddress)
-      console.log(`${TAG} handshake complete with ${peerAddress.slice(0, 8)}…`)
-      console.log(
+      this.logger.debug(`${TAG} handshake complete with ${peerAddress.slice(0, 8)}…`)
+      this.logger.debug(
         `${TAG} post-handshake state — connectionState=${pc.connectionState} iceConnectionState=${pc.iceConnectionState} signalingState=${pc.signalingState}`,
       )
 
       let polls = 0
       const poller = setInterval(() => {
-        console.log(
+        this.logger.debug(
           `${TAG} [poll ${++polls}] connectionState=${pc.connectionState} iceConnectionState=${pc.iceConnectionState}`,
         )
 
@@ -381,28 +395,27 @@ class SwarmRtcTransport implements DocTransport {
     }
   }
 
-  /** Sets up Yjs sync over an open WebRTC data channel. */
   private setupDataChannel(peerAddress: string, channel: RTCDataChannel): void {
-    console.log(`${TAG} channel OPEN with ${peerAddress.slice(0, 8)}…`)
+    this.logger.debug(`${TAG} channel OPEN with ${peerAddress.slice(0, 8)}…`)
     this.deps.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
 
     // Must be set before any messages arrive; default 'blob' causes Uint8Array construction to fail.
     channel.binaryType = CHANNEL_BINARY_TYPE
 
     const initialState = Y.encodeStateAsUpdate(this.deps.doc)
-    console.log(`${TAG} sending initial state to ${peerAddress.slice(0, 8)}… bytes=${initialState.length}`)
+    this.logger.debug(`${TAG} sending initial state to ${peerAddress.slice(0, 8)}… bytes=${initialState.length}`)
     channel.send(initialState as unknown as Uint8Array<ArrayBuffer>)
 
     channel.addEventListener('message', (event: MessageEvent) => {
       const data = new Uint8Array(event.data as ArrayBuffer)
-      console.log(`${TAG} received ${data.length}B from ${peerAddress.slice(0, 8)}…`)
+      this.logger.debug(`${TAG} received ${data.length}B from ${peerAddress.slice(0, 8)}…`)
       Y.applyUpdate(this.deps.doc, data, 'swarm-rtc')
       this.deps.emitter.emit(DOC_EVENTS.DOC_UPDATED, this.deps.doc)
     })
 
     const forwardUpdate = (update: Uint8Array, origin: unknown) => {
       if (origin !== 'swarm-rtc' && origin !== 'remote' && channel.readyState === 'open') {
-        console.log(`${TAG} forwarding update ${update.length}B → ${peerAddress.slice(0, 8)}…`)
+        this.logger.debug(`${TAG} forwarding update ${update.length}B → ${peerAddress.slice(0, 8)}…`)
         channel.send(update as unknown as Uint8Array<ArrayBuffer>)
       }
     }
@@ -412,14 +425,14 @@ class SwarmRtcTransport implements DocTransport {
     channel.addEventListener('close', () => {
       this.deps.doc.off('update', forwardUpdate)
       this.swarmRtcPeers.delete(peerAddress)
-      console.log(`${TAG} channel CLOSED with ${peerAddress.slice(0, 8)}…`)
+      this.logger.debug(`${TAG} channel CLOSED with ${peerAddress.slice(0, 8)}…`)
     })
   }
 
   private waitForIceGatheringComplete(pc: RTCPeerConnection, timeoutMs = 5000): Promise<void> {
     return new Promise(resolve => {
       if (pc.iceGatheringState === 'complete') {
-        console.log(`${TAG} ICE already complete`)
+        this.logger.debug(`${TAG} ICE already complete`)
         resolve()
 
         return
@@ -427,14 +440,14 @@ class SwarmRtcTransport implements DocTransport {
 
       const onStateChange = () => {
         if (pc.iceGatheringState === 'complete') {
-          console.log(`${TAG} ICE gathering complete (event)`)
+          this.logger.debug(`${TAG} ICE gathering complete (event)`)
           resolve()
         }
       }
 
       pc.addEventListener('icegatheringstatechange', onStateChange)
       setTimeout(() => {
-        console.log(`${TAG} ICE gathering timed out after ${timeoutMs}ms, state=${pc.iceGatheringState}`)
+        this.logger.debug(`${TAG} ICE gathering timed out after ${timeoutMs}ms, state=${pc.iceGatheringState}`)
         resolve()
       }, timeoutMs)
     })
@@ -444,17 +457,14 @@ class SwarmRtcTransport implements DocTransport {
 /**
  * Creates a `DocTransportFactory` using Swarm-signaled WebRTC for peer-to-peer sync.
  *
- * WebRTC SDP offer/answer records are written to and read from each peer's
- * `<topic>_signal` Swarm mutable feed, eliminating the need for a central signaling server.
- * ICE gathering runs to completion before the SDP is written, so candidates are embedded
- * in the SDP itself rather than sent incrementally.
+ * SDP offer/answer records are written to each peer's `_signal` Swarm mutable feed,
+ * eliminating the need for a central signaling server. ICE gathering completes before
+ * the SDP is written, so candidates are embedded rather than sent incrementally.
  *
- * Role assignment is deterministic: the peer with the lower Ethereum address always
- * acts as the WebRTC initiator, preventing duplicate connection attempts.
+ * Role assignment is deterministic: the peer with the lower Ethereum address is always
+ * the initiator, preventing duplicate connections.
  *
- * `subscribe` and `publish` are no-ops: Yjs updates flow over WebRTC data channels.
- * A `NotificationPayload` transport (e.g. `createSwarmFeedTransport`) should be used
- * alongside this to handle join notifications and snapshot hints for offline peers.
+ * `subscribe` and `publish` are no-ops — Yjs updates flow directly over WebRTC data channels.
  *
  * @param stunUrl Primary STUN server URL (e.g. `"stun:stun.l.google.com:19302"`).
  * @param iceServers Optional full ICE server list. Overrides the default STUN pair when provided.
