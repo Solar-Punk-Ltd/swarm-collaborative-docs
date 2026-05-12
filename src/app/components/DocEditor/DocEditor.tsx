@@ -1,42 +1,15 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import * as Y from 'yjs'
+import { Doc, Text } from 'yjs'
 
 import { AwarenessState } from '../../hooks/useSwarmDoc'
 import { colorForAddress, getCaretXY } from '../../utils/peers'
+import { applyDiff, SEED } from '../../utils/yjs'
 
 import './DocEditor.scss'
 
-function commonPrefixLen(a: string, b: string): number {
-  let i = 0
-  while (i < a.length && i < b.length && a[i] === b[i]) i++
-
-  return i
-}
-
-function commonSuffixLen(a: string, b: string, prefixLen: number): number {
-  let i = 0
-  const maxLen = Math.min(a.length, b.length) - prefixLen
-  while (i < maxLen && a[a.length - 1 - i] === b[b.length - 1 - i]) i++
-
-  return i
-}
-
-function applyDiff(yText: Y.Text, doc: Y.Doc, oldValue: string, newValue: string): void {
-  const prefix = commonPrefixLen(oldValue, newValue)
-  const suffix = commonSuffixLen(oldValue, newValue, prefix)
-  const deleteCount = oldValue.length - prefix - suffix
-  const insertText = newValue.slice(prefix, newValue.length - suffix)
-
-  if (deleteCount === 0 && insertText.length === 0) return
-  doc.transact(() => {
-    if (deleteCount > 0) yText.delete(prefix, deleteCount)
-
-    if (insertText.length > 0) yText.insert(prefix, insertText)
-  })
-}
-
 interface DocEditorProps {
-  doc: Y.Doc | null
+  yDoc: Doc | null
+  filePathKey?: string
   disabled?: boolean
   awareness?: Map<string, AwarenessState>
   onCursorChange?: (cursor: { anchor: number; head: number } | null) => void
@@ -51,8 +24,14 @@ interface CursorBadge {
   lineHeight: number
 }
 
-export const DocEditor: React.FC<DocEditorProps> = ({ doc, disabled = false, awareness, onCursorChange }) => {
-  const yTextRef = useRef<Y.Text | null>(null)
+export const DocEditor: React.FC<DocEditorProps> = ({
+  yDoc,
+  disabled = false,
+  filePathKey = SEED,
+  awareness,
+  onCursorChange,
+}) => {
+  const yTextRef = useRef<Text | null>(null)
   const prevContentRef = useRef('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [content, setContent] = useState('')
@@ -60,11 +39,11 @@ export const DocEditor: React.FC<DocEditorProps> = ({ doc, disabled = false, awa
   const [badges, setBadges] = useState<CursorBadge[]>([])
 
   useEffect(() => {
-    if (!doc) {
+    if (!yDoc) {
       return
     }
 
-    const yText = doc.getText('content')
+    const yText = yDoc.getText(filePathKey)
     yTextRef.current = yText
     const initial = yText.toString()
     prevContentRef.current = initial
@@ -79,7 +58,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({ doc, disabled = false, awa
     yText.observe(observer)
 
     return () => yText.unobserve(observer)
-  }, [doc])
+  }, [yDoc, filePathKey])
 
   useLayoutEffect(() => {
     const el = textareaRef.current
@@ -123,18 +102,18 @@ export const DocEditor: React.FC<DocEditorProps> = ({ doc, disabled = false, awa
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    if (!yTextRef.current || !doc) {
+    if (!yTextRef.current || !yDoc) {
       return
     }
 
     const newValue = e.target.value
     const oldValue = prevContentRef.current
     prevContentRef.current = newValue
-    applyDiff(yTextRef.current, doc, oldValue, newValue)
+    applyDiff(yTextRef.current, yDoc, oldValue, newValue)
     reportCursor()
   }
 
-  if (!doc) {
+  if (!yDoc) {
     return <div className="doc-editor doc-editor--loading">Connecting to document…</div>
   }
 

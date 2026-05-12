@@ -1,0 +1,123 @@
+$swarm-orange: #f76808;
+$swarm-dark: #050509;
+$swarm-surface: #0e0e1a;
+$swarm-border: rgba(120, 120, 180, 0.14);
+$swarm-muted: #8a8aa3;
+$swarm-text: #f8f8ff;
+
+.doc-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: $swarm-dark;
+  position: relative;
+
+  &--loading {
+    padding: 24px;
+    color: $swarm-muted;
+    font-style: italic;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Inter', system-ui, sans-serif;
+
+    &::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: $swarm-orange;
+      margin-right: 10px;
+      animation: doc-editor-pulse 1.5s ease-in-out infinite;
+    }
+  }
+
+  &__textarea {
+    flex: 1;
+    width: 100%;
+    padding: 28px 32px;
+    font-family: 'JetBrains Mono', 'Courier New', Courier, monospace;
+    font-size: 14px;
+    line-height: 1.7;
+    background: $swarm-surface;
+    color: $swarm-text;
+    border: none;
+    border-top: 1px solid $swarm-border;
+    outline: none;
+    resize: none;
+    box-sizing: border-box;
+    caret-color: $swarm-orange;
+    transition: background 0.2s ease;
+
+    &:focus {
+      background: rgba(14, 14, 26, 0.6);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    &::placeholder {
+      color: rgba(138, 138, 163, 0.4);
+      font-style: italic;
+      font-family: 'Inter', system-ui, sans-serif;
+    }
+
+    &::selection {
+      background: rgba(247, 104, 8, 0.25);
+    }
+  }
+  &__cursor-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  &__cursor-line {
+    position: absolute;
+    width: 2px;
+    border-radius: 1px;
+    opacity: 0.85;
+  }
+
+  &__cursor-badge {
+    position: absolute;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    color: #fff;
+    padding: 1px 5px;
+    border-radius: 3px;
+    white-space: nowrap;
+    opacity: 0.92;
+    line-height: 16px;
+  }
+
+  .yRemoteSelection {
+    background-color: var(--user-color-light);
+    opacity: 0.4;
+  }
+
+  .yRemoteSelectionHead {
+    border-left: 2px solid var(--user-color);
+    position: relative;
+  }
+}
+
+@keyframes doc-editor-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}

@@ -22,6 +22,7 @@ import {
 import { colorForAddress } from '../../utils/peers'
 import { Session, Transport, TRANSPORT_LABELS } from '../../utils/types'
 import { DocEditor } from '../DocEditor/DocEditor'
+import { MonacoEditor } from '../MonacoEditor/MonacoEditor'
 
 import './SessionView.scss'
 
@@ -37,6 +38,7 @@ interface SessionViewProps {
   onLogout: () => void
 }
 
+// TODO: login config for monaco vs plain text editor
 export const SessionView: React.FC<SessionViewProps> = ({
   session,
   beeUrl,
@@ -138,12 +140,15 @@ export const SessionView: React.FC<SessionViewProps> = ({
             </button>
           </div>
         ) : null}
-        <DocEditor
-          doc={doc}
-          disabled={disableUntilConnected && !connected}
-          awareness={awareness}
-          onCursorChange={updateCursor}
-        />
+        {doc && (
+          <MonacoEditor
+            yDoc={doc}
+            username={session.username}
+            // userColor={}
+            disabled={disableUntilConnected && !connected}
+            // awareness={awareness}
+          />
+        )}
       </div>
     )
   }
