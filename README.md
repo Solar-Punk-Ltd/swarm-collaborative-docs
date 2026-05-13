@@ -23,14 +23,16 @@ receive low-latency delta notifications. No central server is required for eithe
 
 1. **Init**: Each peer reads its own latest snapshot from Swarm and restores local Yjs state.
 2. **Member list**: The peer writes itself to the shared consensus feed, then fetches snapshots from all listed peers.
-3. **Join announcement**: A `NotificationPayload` with `feedIndex = JOIN_FEED_INDEX` (-1) is published so online peers
-   know to fetch the new peer's snapshot.
+3. **Join announcement**: A `JoinPayload` (`type: 'join'`) is published so online peers know to fetch the new peer's
+   snapshot.
 4. **Local edits**: Yjs `update` events are debounced (500ms), merged into a snapshot, written to the user's Swarm feed,
-   and broadcast as a delta via the transport.
-5. **Remote updates (delta path)**: When a notification carrying a `delta` arrives, the base64-encoded Yjs update is
-   applied directly — no Swarm read required.
+   and broadcast as a signed delta via the transport.
+5. **Remote updates (delta path)**: When a notification carrying a `delta` arrives, the secp256k1 signature is verified
+   and the base64-encoded Yjs update is applied directly — no Swarm read required. Unsigned or invalid deltas are dropped.
 6. **Remote updates (snapshot path)**: For join events or notifications without a delta, the peer's full snapshot is
    fetched from Swarm (with retries).
+7. **Cursor awareness**: Cursor positions are broadcast on a ~500ms timer via `CursorPayload` (`type: 'cursor'`) and
+   surfaced via `DOC_EVENTS.AWARENESS_UPDATED`.
 
 ---
 
@@ -88,13 +90,14 @@ swarmDoc.stop()
 
 #### Public members
 
-| Member                | Description                                                      |
-| --------------------- | ---------------------------------------------------------------- |
-| `doc: Y.Doc`          | The shared Yjs document. Bind editors directly to this instance. |
-| `start()`             | Starts transport, fetches snapshots, begins member poll.         |
-| `stop()`              | Tears down transport and all timers.                             |
-| `getEmitter()`        | Returns the `EventEmitter` for `DOC_EVENTS` subscriptions.       |
-| `refreshMemberList()` | Force-reads the consensus member list and registers new peers.   |
+| Member                | Description                                                                   |
+| --------------------- | ----------------------------------------------------------------------------- |
+| `doc: Y.Doc`          | The shared Yjs document. Bind editors directly to this instance.              |
+| `start()`             | Starts transport, fetches snapshots, begins member poll.                      |
+| `stop()`              | Tears down transport and all timers.                                          |
+| `updateCursor(cursor)`| Reports the local cursor `{ anchor, head }` (or `null`) for broadcast.        |
+| `getEmitter()`        | Returns the `EventEmitter` for `DOC_EVENTS` subscriptions.                    |
+| `refreshMemberList()` | Force-reads the consensus member list and registers new peers.                |
 
 ### `DocSettings`
 
@@ -119,12 +122,25 @@ consensus member list.
 
 ### `DOC_EVENTS`
 
-| Event                        | Payload               | When                                      |
-| ---------------------------- | --------------------- | ----------------------------------------- |
-| `DOC_EVENTS.DOC_UPDATED`     | `Y.Doc`               | After every remote update is applied      |
-| `DOC_EVENTS.DOC_ERROR`       | `Error`               | Stamp validation failure or publish error |
-| `DOC_EVENTS.MEMBERS_UPDATED` | `Map<string, string>` | Peer list changes (address → username)    |
-| `DOC_EVENTS.PEERS_CONNECTED` | `true`                | Transport has at least one connected peer |
+| Event                           | Payload                                             | When                                      |
+| ------------------------------- | --------------------------------------------------- | ----------------------------------------- |
+| `DOC_EVENTS.DOC_UPDATED`        | `Y.Doc`                                             | After every remote update is applied      |
+| `DOC_EVENTS.DOC_ERROR`          | `Error`                                             | Stamp validation failure or publish error |
+| `DOC_EVENTS.MEMBERS_UPDATED`    | `Map<string, string>`                               | Peer list changes (address → username)    |
+| `DOC_EVENTS.PEERS_CONNECTED`    | `true`                                              | Transport has at least one connected peer |
+| `DOC_EVENTS.AWARENESS_UPDATED`  | `{ address, username, cursor: {anchor,head}\|null }` | Remote cursor position changed            |
+
+---
+
+### Interfaces
+
+The library exports TypeScript interfaces for each major class, useful for testing and dependency injection:
+
+| Interface      | Implemented by  | Description                                  |
+| -------------- | --------------- | -------------------------------------------- |
+| `ISwarmDoc`    | `SwarmDoc`      | Public API of the collaborative doc session  |
+| `IMembers`     | `Members`       | Peer set management and consensus feed       |
+| `ISwarmSignal` | `SwarmSignal`   | WebRTC signaling feed reads and writes       |
 
 ---
 
@@ -158,32 +174,13 @@ peers rely on Swarm snapshot reads for recovery. Low latency: ~100ms.
 
 ---
 
-### `createSwarmFeedTransport`
-
-**Best for**: reliable delivery to offline peers; production use without any external server.
-
-Polls each peer's `<topic>_notify<address>` Swarm feed at 1.5 s intervals (backs off to 5 s when idle). Writes outgoing
-payloads to the local user's own notification feed.
-
-```typescript
-import { createSwarmFeedTransport } from '@solarpunkltd/swarm-collaborative-docs'
-
-transport: createSwarmFeedTransport(beeUrl, privateKey, mutableStamp, topic)
-```
-
-**Delivery model**: store-and-forward over Swarm feeds. Messages persist for offline peers and are delivered on next
-poll. Latency ~1.5–5 s.
-
----
-
 ### `createYWebrtcTransport`
 
 **Best for**: low-latency sync in controlled environments with an available WebSocket signaling server.
 
 Uses the [y-webrtc](https://github.com/yjs/y-webrtc) library. Peers are discovered via the `awareness` protocol through
 a WebSocket signaling server. Yjs state is synchronised over WebRTC data channels. Cross-tab sync within the same origin
-is handled automatically by y-webrtc's built-in BroadcastChannel — no separate `createBroadcastChannelTransport` is
-needed.
+is handled automatically by y-webrtc's built-in BroadcastChannel.
 
 ```typescript
 import { createYWebrtcTransport } from '@solarpunkltd/swarm-collaborative-docs'
@@ -211,8 +208,8 @@ import { createSwarmRtcTransport } from '@solarpunkltd/swarm-collaborative-docs'
 transport: createSwarmRtcTransport('stun:stun.l.google.com:19302' /* iceServers? */)
 ```
 
-**Delivery model**: WebRTC data channels (peer-to-peer). `subscribe`/`publish` are no-ops. To handle join announcements
-and snapshot hints for peers that go offline, compose this with a notification transport at the application layer.
+**Delivery model**: WebRTC data channels (peer-to-peer). `subscribe`/`publish` are no-ops. Swarm snapshot reads
+provide fallback for offline history.
 
 ---
 
@@ -236,21 +233,6 @@ transport: createWakuTransport(['/ip4/...'])
 
 **Delivery model**: gossipsub pub/sub over the Waku network. Near-real-time delivery for online peers. Messages are
 ephemeral — offline peers rely on Swarm snapshot reads for recovery.
-
----
-
-### `createBroadcastChannelTransport`
-
-**Best for**: same-origin multi-tab development and testing only.
-
-Uses the browser `BroadcastChannel` API. Messages are visible only within the same origin (protocol + host + port). Does
-not cross network boundaries.
-
-```typescript
-import { createBroadcastChannelTransport } from '@solarpunkltd/swarm-collaborative-docs'
-
-transport: createBroadcastChannelTransport()
-```
 
 ---
 
@@ -303,8 +285,7 @@ Enter a username, then configure:
 - **Transport tabs** — select the active notification transport:
   - _Swarm PubSub_ — GSOC ephemeral pubsub (requires a Bee broker peer, see Advanced Settings)
   - _Waku_ — Waku gossipsub (no Bee node required)
-  - _WebRTC_ — y-webrtc via a signaling server or Swarm-based SDP signaling (see Advanced Settings)
-- **Advanced Settings** (collapsible):
+  - _WebRTC_ — y-webrtc via a signaling server or Swarm-based SDP signaling (see Advanced Settings)- **Advanced Settings** (collapsible):
   - Bee API URL
   - Postage batch ID
   - Disable editing until a peer is connected (WebRTC / Waku only)
@@ -319,14 +300,14 @@ Enter a username, then configure:
 
 ## Transport comparison
 
-|                      | SwarmPubSub | SwarmFeed | y-webrtc | SwarmRtc |  Waku  | BroadcastChannel |
-| -------------------- | :---------: | :-------: | :------: | :------: | :----: | :--------------: |
-| Latency              |   ~100ms    |  ~1.5–5s  |  ~100ms  |  ~100ms  | ~100ms |       ~0ms       |
-| Offline delivery     |      ✗      |     ✓     |    ✗     |    ✗     |   ✗    |        ✗         |
-| No external server   |      ✓      |     ✓     |    ✗     |    ✓     |   ✓    |        ✓         |
-| Requires Bee node    |      ✓      |     ✓     |    ✗     |    ✓     |   ✗    |        ✗         |
-| Requires broker peer |      ✓      |     ✗     |    ✗     |    ✗     |   ✗    |        ✗         |
-| Cross-device         |      ✓      |     ✓     |    ✓     |    ✓     |   ✓    |        ✗         |
+|                      | SwarmPubSub | y-webrtc | SwarmRtc |  Waku  |
+| -------------------- | :---------: | :------: | :------: | :----: |
+| Latency              |   ~100ms    |  ~100ms  |  ~100ms  | ~100ms |
+| Offline delivery     |      ✗      |    ✗     |    ✗     |   ✗    |
+| No external server   |      ✓      |    ✗     |    ✓     |   ✓    |
+| Requires Bee node    |      ✓      |    ✗     |    ✓     |   ✗    |
+| Requires broker peer |      ✓      |    ✗     |    ✗     |   ✗    |
+| Cross-device         |      ✓      |    ✓     |    ✓     |   ✓    |
 
 All transports fall back to Swarm snapshot reads for document history recovery regardless of notification delivery
 guarantees.
