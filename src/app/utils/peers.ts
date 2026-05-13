@@ -57,3 +57,36 @@ export function colorForAddress(address: string): string {
 
   return CURSOR_COLORS[index]
 }
+
+export function injectPeerStyle(key: string, address: string, username: string, color: string) {
+  const style = document.createElement('style')
+
+  style.textContent = `
+    .remote-selection-${key} {
+      background: ${color}33;  /* 20% opacity */
+    }
+    .remote-cursor-head-${key}::before {
+      content: '';
+      display: inline-block;
+      width: 2px;
+      height: 1.2em;
+      background: ${color};
+      margin-left: -1px;
+      position: absolute;
+    }
+    .remote-cursor-head-${key}::after {
+      content: '${username}';
+      background: ${color};
+      color: #fff;
+      font-size: 11px;
+      padding: 1px 4px;
+      border-radius: 2px;
+      position: absolute;
+      top: -1.4em;
+      left: 0;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+  `
+  document.head.appendChild(style)
+}

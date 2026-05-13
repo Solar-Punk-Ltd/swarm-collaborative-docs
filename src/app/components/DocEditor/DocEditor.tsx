@@ -1,8 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Doc, Text } from 'yjs'
 
-import { AwarenessState } from '../../hooks/useSwarmDoc'
 import { colorForAddress, getCaretXY } from '../../utils/peers'
+import { AwarenessState } from '../../utils/types'
 import { applyDiff, SEED } from '../../utils/yjs'
 
 import './DocEditor.scss'

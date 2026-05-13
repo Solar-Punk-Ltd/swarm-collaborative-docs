@@ -26,3 +26,9 @@ export enum WebrtcMode {
   SIGNALING_SERVER = 'signaling-server',
   SWARM_SIGNAL_FEED = 'swarm-singal-feed',
 }
+
+export interface AwarenessState {
+  address: string
+  username: string
+  cursor: { anchor: number; head: number } | null
+}

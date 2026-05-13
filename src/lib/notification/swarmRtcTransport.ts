@@ -30,6 +30,8 @@ class SwarmRtcTransport implements DocTransport {
   private signalPollTimer: ReturnType<typeof setInterval> | null = null
   private signalCheckInFlight = false
   private stopped = false
+  private handler: NotificationHandler | null = null
+  private openChannels = new Map<string, RTCDataChannel>()
 
   constructor(
     private readonly stunUrl: string,
@@ -68,12 +70,22 @@ class SwarmRtcTransport implements DocTransport {
     return origin === 'swarm-rtc'
   }
 
-  // Yjs sync runs over data channels — subscribe/publish are unused
-  subscribe(_topic: string, _handler: NotificationHandler): void {
-    /** no-op */
+  subscribe(_topic: string, handler: NotificationHandler): void {
+    this.handler = handler
   }
-  publish(_payload: NotificationPayload): void {
-    /** no-op */
+
+  publish(payload: NotificationPayload): void {
+    if (this.openChannels.size === 0) {
+      return
+    }
+
+    const text = JSON.stringify(payload)
+
+    for (const channel of this.openChannels.values()) {
+      if (channel.readyState === 'open') {
+        channel.send(text)
+      }
+    }
   }
 
   connectToPeer(address: string): void {
@@ -281,10 +293,6 @@ class SwarmRtcTransport implements DocTransport {
 
     const peerAddrs = Array.from(peers.keys())
 
-    this.logger.debug(
-      `${TAG} checking signals for ${peers.size} peer(s): ${peerAddrs.map(a => a.slice(0, 8)).join(', ')}`,
-    )
-
     try {
       await Promise.allSettled(peerAddrs.map(addr => this.checkPeerSignals(addr)))
     } finally {
@@ -398,24 +406,36 @@ class SwarmRtcTransport implements DocTransport {
   private setupDataChannel(peerAddress: string, channel: RTCDataChannel): void {
     this.logger.debug(`${TAG} channel OPEN with ${peerAddress.slice(0, 8)}…`)
     this.deps.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
-
-    // Must be set before any messages arrive; default 'blob' causes Uint8Array construction to fail.
     channel.binaryType = CHANNEL_BINARY_TYPE
+    this.openChannels.set(peerAddress, channel)
 
+    // send full Yjs state as binary — peer applies it directly
     const initialState = Y.encodeStateAsUpdate(this.deps.doc)
-    this.logger.debug(`${TAG} sending initial state to ${peerAddress.slice(0, 8)}… bytes=${initialState.length}`)
     channel.send(initialState as unknown as Uint8Array<ArrayBuffer>)
 
     channel.addEventListener('message', (event: MessageEvent) => {
-      const data = new Uint8Array(event.data as ArrayBuffer)
-      this.logger.debug(`${TAG} received ${data.length}B from ${peerAddress.slice(0, 8)}…`)
-      Y.applyUpdate(this.deps.doc, data, 'swarm-rtc')
-      this.deps.emitter.emit(DOC_EVENTS.DOC_UPDATED, this.deps.doc)
+      // binary = Yjs update, string = NotificationPayload JSON
+      if (event.data instanceof ArrayBuffer) {
+        const data = new Uint8Array(event.data)
+        this.logger.debug(`${TAG} received ${data.length}B from ${peerAddress.slice(0, 8)}…`)
+        Y.applyUpdate(this.deps.doc, data, 'swarm-rtc')
+        this.deps.emitter.emit(DOC_EVENTS.DOC_UPDATED, this.deps.doc)
+      } else if (typeof event.data === 'string') {
+        if (!this.handler) {
+          return
+        }
+
+        try {
+          const payload = JSON.parse(event.data) as NotificationPayload
+          this.handler(payload)
+        } catch (err) {
+          this.errorHandler.handleError(err, `${TAG}.onMessage`)
+        }
+      }
     })
 
     const forwardUpdate = (update: Uint8Array, origin: unknown) => {
       if (origin !== 'swarm-rtc' && origin !== 'remote' && channel.readyState === 'open') {
-        this.logger.debug(`${TAG} forwarding update ${update.length}B → ${peerAddress.slice(0, 8)}…`)
         channel.send(update as unknown as Uint8Array<ArrayBuffer>)
       }
     }
@@ -424,6 +444,7 @@ class SwarmRtcTransport implements DocTransport {
 
     channel.addEventListener('close', () => {
       this.deps.doc.off('update', forwardUpdate)
+      this.openChannels.delete(peerAddress)
       this.swarmRtcPeers.delete(peerAddress)
       this.logger.debug(`${TAG} channel CLOSED with ${peerAddress.slice(0, 8)}…`)
     })

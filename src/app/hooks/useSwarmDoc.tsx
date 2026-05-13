@@ -2,11 +2,7 @@ import { DOC_EVENTS, DocSettings, ISwarmDoc, SwarmDoc } from 'lib'
 import { useEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
 
-export interface AwarenessState {
-  address: string
-  username: string
-  cursor: { anchor: number; head: number } | null
-}
+import { AwarenessState } from '../utils/types'
 
 export interface SwarmDocContext {
   doc: Y.Doc | null

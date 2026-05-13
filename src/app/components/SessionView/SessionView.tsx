@@ -143,10 +143,9 @@ export const SessionView: React.FC<SessionViewProps> = ({
         {doc && (
           <MonacoEditor
             yDoc={doc}
-            username={session.username}
-            // userColor={}
             disabled={disableUntilConnected && !connected}
-            // awareness={awareness}
+            awareness={awareness}
+            updateCursor={updateCursor}
           />
         )}
       </div>
