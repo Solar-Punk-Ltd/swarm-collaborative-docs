@@ -20,7 +20,7 @@ import {
   TOPIC_KEY,
 } from '../../utils/constants'
 import { colorForAddress } from '../../utils/peers'
-import { Session, Transport, TRANSPORT_LABELS } from '../../utils/types'
+import { DocType, Session, Transport, TRANSPORT_LABELS } from '../../utils/types'
 import { DocEditor } from '../DocEditor/DocEditor'
 import { MonacoEditor } from '../MonacoEditor/MonacoEditor'
 
@@ -31,6 +31,7 @@ interface SessionViewProps {
   beeUrl: string
   mutableStamp: string
   topic: string
+  docType: DocType
   disableUntilConnected: boolean
   onBeeUrlChange: (url: string) => void
   onMutableStampChange: (v: string) => void
@@ -38,12 +39,12 @@ interface SessionViewProps {
   onLogout: () => void
 }
 
-// TODO: login config for monaco vs plain text editor
 export const SessionView: React.FC<SessionViewProps> = ({
   session,
   beeUrl,
   mutableStamp,
   topic,
+  docType,
   disableUntilConnected,
   onBeeUrlChange,
   onMutableStampChange,
@@ -129,7 +130,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
 
   const transportLabel = TRANSPORT_LABELS[session.transport]
 
-  const displayDocBlock = () => {
+  const editorBlock = () => {
     return (
       <div className="session-view__doc-block">
         {error ? (
@@ -140,14 +141,22 @@ export const SessionView: React.FC<SessionViewProps> = ({
             </button>
           </div>
         ) : null}
-        {doc && (
-          <MonacoEditor
-            yDoc={doc}
-            disabled={disableUntilConnected && !connected}
-            awareness={awareness}
-            updateCursor={updateCursor}
-          />
-        )}
+        {doc &&
+          (docType === DocType.Code ? (
+            <MonacoEditor
+              yDoc={doc}
+              disabled={disableUntilConnected && !connected}
+              awareness={awareness}
+              onCursorChange={updateCursor}
+            />
+          ) : (
+            <DocEditor
+              yDoc={doc}
+              disabled={disableUntilConnected && !connected}
+              awareness={awareness}
+              onCursorChange={updateCursor}
+            />
+          ))}
       </div>
     )
   }
@@ -291,7 +300,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
       </div>
 
       {/* Doc */}
-      <div className="session-view__doc">{displayDocBlock()}</div>
+      <div className="session-view__doc">{editorBlock()}</div>
     </div>
   )
 }

@@ -17,15 +17,20 @@ const OFFER_MAX_AGE_MS = 5 * 60 * 1_000 // 5 mins
 const PEER_RETRY_TIMEOUT_MS = 10_000 // 10 sec
 const CHANNEL_BINARY_TYPE = 'arraybuffer'
 
+enum Origin {
+  SwarmRtc = 'swarm-rtc',
+  Remote = 'remote',
+}
+
 class SwarmRtcTransport implements DocTransport {
   private errorHandler = ErrorHandler.getInstance()
   private logger = Logger.getInstance()
 
   private swarmSignal: ISwarmSignal
   private swarmRtcPeers = new Map<string, RTCPeerConnection>()
-  /** sessionId per peer for correlating incoming answers to our outstanding offer. */
+  // sessionId per peer for correlating incoming answers to our outstanding offer
   private pendingOfferSessions = new Map<string, string>()
-  /** `"peerAddress:sessionId"` keys already answered — prevents double-answering the same offer. */
+  // `"peerAddress:sessionId"` keys already answered — prevents double-answering the same offer
   private sentAnswerKeys = new Set<string>()
   private signalPollTimer: ReturnType<typeof setInterval> | null = null
   private signalCheckInFlight = false
@@ -67,7 +72,7 @@ class SwarmRtcTransport implements DocTransport {
   }
 
   isRemoteOrigin(origin: unknown): boolean {
-    return origin === 'swarm-rtc'
+    return origin === Origin.SwarmRtc
   }
 
   subscribe(_topic: string, handler: NotificationHandler): void {
@@ -101,7 +106,6 @@ class SwarmRtcTransport implements DocTransport {
     if (this.isInitiatorFor(address)) {
       this.initiateConnectionTo(address)
     }
-    // Answerers wait — startSignalPoll() will pick up the initiator's offer
   }
 
   // Lower address is always the initiator — deterministic assignment prevents both peers from sending offers simultaneously.
@@ -418,7 +422,7 @@ class SwarmRtcTransport implements DocTransport {
       if (event.data instanceof ArrayBuffer) {
         const data = new Uint8Array(event.data)
         this.logger.debug(`${TAG} received ${data.length}B from ${peerAddress.slice(0, 8)}…`)
-        Y.applyUpdate(this.deps.doc, data, 'swarm-rtc')
+        Y.applyUpdate(this.deps.doc, data, Origin.SwarmRtc)
         this.deps.emitter.emit(DOC_EVENTS.DOC_UPDATED, this.deps.doc)
       } else if (typeof event.data === 'string') {
         if (!this.handler) {
@@ -435,7 +439,7 @@ class SwarmRtcTransport implements DocTransport {
     })
 
     const forwardUpdate = (update: Uint8Array, origin: unknown) => {
-      if (origin !== 'swarm-rtc' && origin !== 'remote' && channel.readyState === 'open') {
+      if (origin !== Origin.SwarmRtc && origin !== Origin.Remote && channel.readyState === 'open') {
         channel.send(update as unknown as Uint8Array<ArrayBuffer>)
       }
     }

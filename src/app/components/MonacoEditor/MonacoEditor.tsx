@@ -28,7 +28,7 @@ interface MonacoEditorProps {
   filePathKey?: string
   disabled?: boolean
   awareness?: Map<string, AwarenessState>
-  updateCursor?: (cursor: { anchor: number; head: number } | null) => void
+  onCursorChange?: (cursor: { anchor: number; head: number } | null) => void
 }
 
 const injectedPeers = new Set<string>()
@@ -39,7 +39,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   filePathKey = SEED,
   disabled = false,
   awareness,
-  updateCursor,
+  onCursorChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
@@ -85,7 +85,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   }, [yDoc, filePathKey])
 
   useEffect(() => {
-    if (!editorRef.current || !yDoc || !updateCursor) return
+    if (!editorRef.current || !yDoc || !onCursorChange) return
 
     const disposable = editorRef.current.onDidChangeCursorSelection(e => {
       const model = editorRef.current?.getModel()
@@ -94,14 +94,14 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
         return
       }
 
-      updateCursor({
+      onCursorChange({
         anchor: model.getOffsetAt(e.selection.getStartPosition()),
         head: model.getOffsetAt(e.selection.getEndPosition()),
       })
     })
 
     return () => disposable.dispose()
-  }, [yDoc, filePathKey, updateCursor])
+  }, [yDoc, filePathKey, onCursorChange])
 
   useEffect(() => {
     if (!awareness) {
@@ -186,5 +186,5 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
     })
   }, [awareness])
 
-  return <div ref={containerRef} style={{ width: '100%', height: '600px' }} />
+  return <div ref={containerRef} className="monaco-editor-wrap" />
 }

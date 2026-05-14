@@ -1,7 +1,7 @@
 import { FeedIndex } from '@ethersphere/bee-js'
 
 export const API_VERSION = 'v1'
-export const PLACEHOLDER_STAMP = '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+export const PLACEHOLDER_STAMP = 'ca7437e1aeb4af9f306ab21f504583361695f62b25f5e2d16a118d4c601008aa'
 export const FEED_INDEX_ZERO = FeedIndex.fromBigInt(0n)
 /** Feed ID suffix for per-user document snapshot feeds: `<topic>_doc<address>`. */
 export const DOC_FEED_SUFFIX = '_doc'

@@ -9,6 +9,7 @@ import {
   DEFAULT_ICE_SERVER_URL,
   DEFAULT_SIGNALING_SERVER_URL,
   DEFAULT_TOPIC,
+  DOCTYPE_KEY,
   MUTABLE_STAMP_KEY,
   SESSION_KEY,
   SIGNALING_URL_KEY,
@@ -16,21 +17,13 @@ import {
   TOPIC_KEY,
   TRANSPORT_KEY,
 } from '../../utils/constants'
-import { loadBrokerPeer, loadSession, loadStunUrl, loadTransport } from '../../utils/localStorage'
-import { Transport, TRANSPORT_LABELS, WebrtcMode } from '../../utils/types'
+import { loadBrokerPeer, loadDocType, loadSession, loadStunUrl, loadTransport } from '../../utils/localStorage'
+import { DocType, DOCTYPE_LABELS, SessionOpts, Transport, TRANSPORT_LABELS, WebrtcMode } from '../../utils/types'
+import { buildInviteLink } from '../../utils/url'
 
 import './LoginView.scss'
 
 const BUTTON_TIMEOUT_MS = 1500
-
-const origin = typeof window !== 'undefined' ? window.location.origin : ''
-
-const buildInviteLink = (docId: string, transport: string) => {
-  const m = typeof window !== 'undefined' ? window.location.pathname.match(/^\/bzz\/([^/]+)/) : null
-  const base = m && m[1] ? `${origin}/bzz/${m[1]}/` : `${origin}/`
-
-  return `${base}?doc=${encodeURIComponent(docId)}&trans=${transport}`
-}
 
 interface LoginViewProps {
   username?: string
@@ -42,18 +35,11 @@ interface LoginViewProps {
   onMutableStampChange: (v: string) => void
   onTopicChange: (v: string) => void
   onDisableUntilConnectedChange: (v: boolean) => void
-  onLogin: (
-    username: string,
-    transport: Transport,
-    topic: string,
-    signalingUrl?: string,
-    stunUrl?: string,
-    wakuAddress?: string,
-    brokerPeer?: string,
-  ) => void
+  onLogin: (opts: SessionOpts) => void
 }
 
 const Transports = [Transport.SWARM_PUBSUB, Transport.WAKU, Transport.WEBRTC] as const
+const DocTypes = [DocType.Code, DocType.Document] as const
 
 export const LoginView: React.FC<LoginViewProps> = ({
   username,
@@ -69,6 +55,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
 }) => {
   const [inputName, setInputName] = useState(username ?? '')
   const [transport, setTransport] = useState<Transport>(loadTransport())
+  const [docType, setDocType] = useState<DocType>(loadDocType())
   const [serverUrl, setServerUrl] = useState(loadStunUrl())
   const [webrtcMode, setWebrtcMode] = useState<WebrtcMode>(
     loadStunUrl() ? WebrtcMode.SWARM_SIGNAL_FEED : WebrtcMode.SIGNALING_SERVER,
@@ -85,16 +72,21 @@ export const LoginView: React.FC<LoginViewProps> = ({
     localStorage.setItem(TRANSPORT_KEY, t)
   }
 
+  const handleDocTypeChange = (d: DocType) => {
+    setDocType(d)
+    localStorage.setItem(DOCTYPE_KEY, d)
+  }
+
   const handleCopyInvite = useCallback(async () => {
     try {
-      const link = buildInviteLink(topic, transport)
+      const link = buildInviteLink(topic, transport, docType)
       await navigator.clipboard.writeText(link)
       setCopied(true)
       setTimeout(() => setCopied(false), BUTTON_TIMEOUT_MS)
     } catch {
       // ignore
     }
-  }, [topic, transport])
+  }, [topic, transport, docType])
 
   const handleGenerateNewDocId = useCallback(() => {
     const newDocId = uuidV4()
@@ -162,8 +154,8 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
     const peer = brokerPeer.trim() || undefined
 
-    onLogin(name, transport, topic, signalingUrl, stunUrl, undefined, peer)
-  }, [inputName, transport, topic, webrtcMode, brokerPeer, beeUrl, mutableStamp, onLogin, serverUrl])
+    onLogin({ username: name, transport, topic, docType, signalingUrl, stunUrl, brokerPeer: peer })
+  }, [inputName, transport, topic, webrtcMode, docType, brokerPeer, beeUrl, mutableStamp, onLogin, serverUrl])
 
   return (
     <div className="login-view">
@@ -217,13 +209,13 @@ export const LoginView: React.FC<LoginViewProps> = ({
           </div>
 
           <div className="login-view__tab-bar">
-            {Transports.map(t => (
+            {DocTypes.map(d => (
               <button
-                key={t}
-                onClick={() => handleTransportChange(t)}
-                className={`login-view__tab-btn${transport === t ? ' login-view__tab-btn--active' : ''}`}
+                key={d}
+                onClick={() => handleDocTypeChange(d)}
+                className={`login-view__tab-btn${docType === d ? ' login-view__tab-btn--active' : ''}`}
               >
-                {TRANSPORT_LABELS[t]}
+                {DOCTYPE_LABELS[d]}
               </button>
             ))}
           </div>
@@ -236,6 +228,18 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
           {advancedOpen && (
             <div className="login-view__advanced">
+              <div className="login-view__tab-bar">
+                {Transports.map(t => (
+                  <button
+                    key={t}
+                    onClick={() => handleTransportChange(t)}
+                    className={`login-view__tab-btn${transport === t ? ' login-view__tab-btn--active' : ''}`}
+                  >
+                    {TRANSPORT_LABELS[t]}
+                  </button>
+                ))}
+              </div>
+
               {transport === Transport.WEBRTC && (
                 <div className="login-view__webrtc">
                   <div className="login-view__tab-bar">

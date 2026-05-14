@@ -56,6 +56,7 @@ export default defineConfig(({ mode }) => {
       lib: libOptions,
       rollupOptions,
     },
+    publicDir: 'public',
     server: {
       port: DEFAULT_VITE_DEV_PORT,
       open: true,

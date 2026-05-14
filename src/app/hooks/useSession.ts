@@ -1,19 +1,13 @@
 import { getSigner, uuidV4 } from 'lib'
 import { useState } from 'react'
 
-import { SESSION_KEY, TRANSPORT_KEY, USERNAME_KEY } from '../utils/constants'
+import { DOCTYPE_KEY, SESSION_KEY, TRANSPORT_KEY, USERNAME_KEY } from '../utils/constants'
 import { loadSession } from '../utils/localStorage'
-import { Session, Transport } from '../utils/types'
+import { Session, SessionOpts } from '../utils/types'
 
-function createSession(
-  username: string,
-  transport: Transport,
-  topic: string,
-  signalingUrl?: string,
-  stunUrl?: string,
-  wakuAddress?: string,
-  brokerPeer?: string,
-): Session {
+function createSession(opts: SessionOpts): Session {
+  const { username, transport, topic, signalingUrl, docType, stunUrl, wakuAddress, brokerPeer } = { ...opts }
+
   const existing = loadSession()
 
   if (existing?.privKey && existing?.pubKey) {
@@ -22,6 +16,7 @@ function createSession(
       privKey: existing.privKey,
       pubKey: existing.pubKey,
       topic,
+      docType,
       transport,
       signalingUrl,
       stunUrl,
@@ -38,6 +33,7 @@ function createSession(
     pubKey: signer.publicKey().address().toString(),
     topic,
     transport,
+    docType,
     signalingUrl,
     stunUrl,
     wakuAddress,
@@ -48,19 +44,12 @@ function createSession(
 export function useSession() {
   const [session, setSession] = useState<Session | null>(loadSession)
 
-  const login = (
-    username: string,
-    transport: Transport,
-    topic: string,
-    signalingUrl?: string,
-    stunUrl?: string,
-    wakuAddress?: string,
-    brokerPeer?: string,
-  ) => {
-    const s = createSession(username, transport, topic, signalingUrl, stunUrl, wakuAddress, brokerPeer)
+  const login = (opts: SessionOpts) => {
+    const s = createSession(opts)
     localStorage.setItem(SESSION_KEY, JSON.stringify(s))
-    localStorage.setItem(TRANSPORT_KEY, transport)
-    localStorage.setItem(USERNAME_KEY, username)
+    localStorage.setItem(TRANSPORT_KEY, opts.transport)
+    localStorage.setItem(DOCTYPE_KEY, opts.docType)
+    localStorage.setItem(USERNAME_KEY, opts.username)
     setSession(s)
   }
 
