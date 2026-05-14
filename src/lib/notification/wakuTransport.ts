@@ -52,7 +52,9 @@ class WakuDocTransport implements DocTransport {
 
   subscribe(topic: string, handler: NotificationHandler): void {
     if (this.node) {
-      this.attachSubscription(topic, handler)
+      this.attachSubscription(topic, handler).catch(err =>
+        this.errorHandler.handleError(err, `${TAG}.attachSubscription`),
+      )
     } else {
       this.pendingSubscription = { topic, handler }
     }
@@ -66,8 +68,9 @@ class WakuDocTransport implements DocTransport {
     }
   }
 
-  // Waku handles peer routing internally
-  connectToPeer(_address: string): void {}
+  connectToPeer(_address: string): void {
+    /** no-op */
+  }
 
   isRemoteOrigin(_origin: unknown): boolean {
     return false
@@ -95,16 +98,13 @@ class WakuDocTransport implements DocTransport {
     if (this.pendingSubscription) {
       const { topic, handler } = this.pendingSubscription
       this.pendingSubscription = null
-      this.attachSubscription(topic, handler)
+      await this.attachSubscription(topic, handler)
     }
 
-    for (const payload of this.pendingPublishes) {
-      if (this.encoder) {
-        this.sendPayload(payload).catch(err => this.errorHandler.handleError(err, `${TAG}.sendPayload`))
-      }
+    const toSend = this.pendingPublishes.splice(0)
+    for (const payload of toSend) {
+      this.sendPayload(payload).catch(err => this.errorHandler.handleError(err, `${TAG}.sendPayload`))
     }
-
-    this.pendingPublishes = []
   }
 
   private waitUntilHealthy(node: LightNode, timeoutMs: number): Promise<void> {
@@ -128,8 +128,10 @@ class WakuDocTransport implements DocTransport {
     })
   }
 
-  private attachSubscription(topic: string, handler: NotificationHandler): void {
-    if (!this.node) return
+  private async attachSubscription(topic: string, handler: NotificationHandler): Promise<void> {
+    if (!this.node) {
+      return
+    }
 
     const contentTopic = contentTopicFor(topic)
     const routingInfo = utils.createRoutingInfo(DefaultNetworkConfig, { contentTopic })
@@ -147,12 +149,8 @@ class WakuDocTransport implements DocTransport {
       }
     }
 
-    this.node.filter
-      .subscribe([decoder], callback)
-      .then(ok => {
-        this.logger.log(`${TAG} subscribed to ${contentTopic} ok=${ok}`)
-      })
-      .catch(err => this.errorHandler.handleError(err, `${TAG}.subscribe`))
+    const ok = await this.node.filter.subscribe([decoder], callback)
+    this.logger.log(`${TAG} subscribed to ${contentTopic} ok=${ok}`)
   }
 
   private async sendPayload(payload: NotificationPayload): Promise<void> {

@@ -1,9 +1,4 @@
-$swarm-orange: #f76808;
-$swarm-dark: #050509;
-$swarm-surface: #0e0e1a;
-$swarm-border: rgba(120, 120, 180, 0.14);
-$swarm-muted: #8a8aa3;
-$swarm-text: #f8f8ff;
+@use '../../styles/variables' as *;
 
 .doc-editor {
   display: flex;

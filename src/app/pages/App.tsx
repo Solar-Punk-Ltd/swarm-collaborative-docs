@@ -3,27 +3,18 @@ import React, { useState } from 'react'
 import { LoginView } from '../components/LoginView/LoginView'
 import { SessionView } from '../components/SessionView/SessionView'
 import { useSession } from '../hooks/useSession'
-import { DISABLE_UNTIL_CONNECTED_KEY, TOPIC_KEY, TRANSPORT_KEY } from '../utils/constants'
+import { DISABLE_UNTIL_CONNECTED_KEY } from '../utils/constants'
 import { loadBeeUrl, loadDisableUntilConnected, loadMutableStamp, loadTopic, loadUsername } from '../utils/localStorage'
+import { DocType } from '../utils/types'
 
 const App: React.FC = () => {
   const { session, login, logout } = useSession()
-
-  const docIdParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('doc') : null
-  const transportParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('trans') : null
-
-  if (transportParam) {
-    localStorage.setItem(TRANSPORT_KEY, transportParam)
-  }
-
-  if (docIdParam) {
-    localStorage.setItem(TOPIC_KEY, docIdParam)
-  }
 
   const [beeUrl, setBeeUrl] = useState(loadBeeUrl())
   const [topic, setTopic] = useState(loadTopic())
   const [mutableStamp, setMutableStamp] = useState(loadMutableStamp())
   const [username, setUsername] = useState(loadUsername())
+  const [docType, setDocType] = useState<DocType>(DocType.Document)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [disableUntilConnected, setDisableUntilConnected] = useState(loadDisableUntilConnected())
 
@@ -44,9 +35,10 @@ const App: React.FC = () => {
         onMutableStampChange={setMutableStamp}
         onTopicChange={setTopic}
         onDisableUntilConnectedChange={handleDisableUntilConnectedChange}
-        onLogin={(username, transport, topic, signalingUrl, stunUrl, wakuAddress, brokerPeer) => {
-          login(username, transport, topic, signalingUrl, stunUrl, wakuAddress, brokerPeer)
-          setUsername(username)
+        onLogin={opts => {
+          login(opts)
+          setUsername(opts.username)
+          setDocType(opts.docType)
           setIsLoggedIn(true)
         }}
       />
@@ -59,6 +51,7 @@ const App: React.FC = () => {
       beeUrl={beeUrl}
       topic={topic}
       mutableStamp={mutableStamp}
+      docType={docType}
       disableUntilConnected={disableUntilConnected}
       onBeeUrlChange={setBeeUrl}
       onMutableStampChange={setMutableStamp}

@@ -29,11 +29,13 @@ export interface DocPayload extends BasePayload {
   sig?: string
 }
 
+export type CursorPosition = { anchor: number; head: number } | null
+
 /** Cursor-only awareness update. Sent on a ~500 ms timer, independent of doc edits. */
 export interface CursorPayload extends BasePayload {
   type: 'cursor'
   /** Character index offsets in the shared `Y.Text`. `null` means deselected or disconnected. */
-  cursor: { anchor: number; head: number } | null
+  cursor: CursorPosition
 }
 
 /** Union of all notification payload variants exchanged between peers. */

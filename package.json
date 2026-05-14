@@ -37,8 +37,10 @@
     "@solarpunkltd/comment-system": "^1.9.3",
     "@waku/sdk": "^0.0.36",
     "lucide-react": "^1.8.0",
+    "monaco-editor": "^0.55.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "y-monaco": "^0.1.6",
     "y-webrtc": "^10.3.0",
     "yjs": "^13.6.30"
   },

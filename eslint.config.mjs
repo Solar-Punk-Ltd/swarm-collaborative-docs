@@ -96,6 +96,7 @@ export default defineConfig([
         localStorage: 'readonly',
         HTMLTextAreaElement: 'readonly',
         HTMLElement: 'readonly',
+        HTMLDivElement: 'readonly',
         TextEncoder: 'readonly',
         TextDecoder: 'readonly',
         CustomEvent: 'readonly',

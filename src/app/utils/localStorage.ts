@@ -8,6 +8,7 @@ import {
   DEFAULT_ICE_SERVER_URL,
   DEFAULT_SIGNALING_SERVER_URL,
   DISABLE_UNTIL_CONNECTED_KEY,
+  DOCTYPE_KEY,
   MUTABLE_STAMP_KEY,
   SESSION_KEY,
   SIGNALING_URL_KEY,
@@ -17,7 +18,7 @@ import {
   USERNAME_KEY,
   WAKU_ADDRESS_KEY,
 } from './constants'
-import { Session, Transport } from './types'
+import { DocType, Session, Transport } from './types'
 
 export function loadSession(): Session | null {
   try {
@@ -54,7 +55,11 @@ export function loadStunUrl(): string {
 }
 
 export function loadTransport(): Transport {
-  return (localStorage.getItem(TRANSPORT_KEY) as Transport) ?? Transport.SWARM_PUBSUB
+  return (localStorage.getItem(TRANSPORT_KEY) as Transport) ?? Transport.WEBRTC
+}
+
+export function loadDocType(): DocType {
+  return (localStorage.getItem(DOCTYPE_KEY) as DocType) ?? DocType.Document
 }
 
 export function loadWakuAddress(): string {

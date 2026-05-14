@@ -24,12 +24,7 @@ export default defineConfig(({ mode }) => {
       formats: ['es', 'cjs'],
       fileName: format => `${APP_NAME}.${format === 'es' ? 'js' : 'cjs.js'}`,
     }
-
-    pluginOptions.push(
-      dts({
-        insertTypesEntry: true,
-      }),
-    )
+    pluginOptions.push(dts({ insertTypesEntry: true }))
   }
 
   const rollupOptions = isLibBuild
@@ -54,14 +49,14 @@ export default defineConfig(({ mode }) => {
       extensions: ['.ts', '.tsx', '.js', '.jsx', '.css', '.scss'],
     },
     optimizeDeps: {
-      // include: [],
-      // exclude: [],
+      include: ['monaco-editor'],
     },
     sourcemap: !isProd,
     build: {
       lib: libOptions,
       rollupOptions,
     },
+    publicDir: 'public',
     server: {
       port: DEFAULT_VITE_DEV_PORT,
       open: true,

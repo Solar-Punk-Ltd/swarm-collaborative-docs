@@ -1,12 +1,4 @@
-$swarm-orange: #f76808;
-$swarm-rose: #f43f5e;
-$swarm-dark: #050509;
-$swarm-surface: #0e0e1a;
-$swarm-elevated: #16162a;
-$swarm-border: rgba(120, 120, 180, 0.14);
-$swarm-muted: #8a8aa3;
-$swarm-text: #f8f8ff;
-$swarm-subtle: rgba(120, 120, 180, 0.08);
+@use '../../styles/variables' as *;
 
 .login-view {
   min-height: 100vh;

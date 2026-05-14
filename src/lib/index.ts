@@ -19,6 +19,7 @@ export type {
   ISwarmDoc,
   IMembers,
   ISwarmSignal,
+  CursorPosition,
 } from './interfaces'
 
 export { getSigner, validateStamps } from './utils/bee'
