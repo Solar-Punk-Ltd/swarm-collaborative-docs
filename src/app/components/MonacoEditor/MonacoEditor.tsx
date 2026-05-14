@@ -11,8 +11,8 @@ import { SEED } from '../../utils/yjs'
 import './MonacoEditor.scss'
 import { colorForAddress, injectPeerStyle } from '../../utils/peers'
 import { AwarenessState } from '../../utils/types'
+import { CursorPosition } from 'lib'
 
-// TODO: style scss
 const DefaultEditorOptions: monaco.editor.IStandaloneEditorConstructionOptions = {
   value: '',
   language: 'typescript',
@@ -26,18 +26,14 @@ interface MonacoEditorProps {
   yDoc: Doc
   options?: monaco.editor.IStandaloneEditorConstructionOptions
   filePathKey?: string
-  disabled?: boolean
   awareness?: Map<string, AwarenessState>
-  onCursorChange?: (cursor: { anchor: number; head: number } | null) => void
+  onCursorChange?: (cursor: CursorPosition) => void
 }
-
-const injectedPeers = new Set<string>()
 
 export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   yDoc,
   options,
   filePathKey = SEED,
-  disabled = false,
   awareness,
   onCursorChange,
 }) => {
@@ -45,6 +41,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
   const bindingRef = useRef<MonacoBinding | null>(null)
   const decorationsRef = useRef<Map<string, string[]>>(new Map())
+  const injectedPeers = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -115,7 +112,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
     }: {
       address: string
       username: string
-      cursor: { anchor: number; head: number } | null
+      cursor: CursorPosition
     }) => {
       if (!editorRef.current) {
         return
@@ -169,11 +166,11 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
       const color = colorForAddress(address)
       const peerKey = address.slice(2, 8)
 
-      if (injectedPeers.has(peerKey)) {
+      if (injectedPeers.current.has(peerKey)) {
         return
       }
 
-      injectedPeers.add(peerKey)
+      injectedPeers.current.add(peerKey)
       injectPeerStyle(peerKey, address, username, color)
     }
 

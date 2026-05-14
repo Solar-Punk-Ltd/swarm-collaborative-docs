@@ -1,3 +1,4 @@
+import { CursorPosition } from 'lib'
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Doc, Text } from 'yjs'
 
@@ -12,7 +13,7 @@ interface DocEditorProps {
   filePathKey?: string
   disabled?: boolean
   awareness?: Map<string, AwarenessState>
-  onCursorChange?: (cursor: { anchor: number; head: number } | null) => void
+  onCursorChange?: (cursor: CursorPosition) => void
 }
 
 interface CursorBadge {

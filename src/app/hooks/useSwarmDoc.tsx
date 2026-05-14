@@ -1,4 +1,4 @@
-import { DOC_EVENTS, DocSettings, ISwarmDoc, SwarmDoc } from 'lib'
+import { CursorPosition, DOC_EVENTS, DocSettings, ISwarmDoc, SwarmDoc } from 'lib'
 import { useEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
 
@@ -10,7 +10,7 @@ export interface SwarmDocContext {
   members: Map<string, string> | null
   connected: boolean
   awareness: Map<string, AwarenessState>
-  updateCursor: (cursor: { anchor: number; head: number } | null) => void
+  updateCursor: (cursor: CursorPosition) => void
   refreshMemberList: () => void
   dismissError: () => void
 }
@@ -67,7 +67,7 @@ export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
     await docRef.current?.refreshMemberList()
   }
 
-  const updateCursor = (cursor: { anchor: number; head: number } | null) => {
+  const updateCursor = (cursor: CursorPosition) => {
     docRef.current?.updateCursor(cursor)
   }
 

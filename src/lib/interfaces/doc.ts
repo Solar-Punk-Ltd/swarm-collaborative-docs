@@ -3,7 +3,7 @@ import * as Y from 'yjs'
 
 import { EventEmitter } from '../utils/eventEmitter'
 
-import type { NotificationHandler, NotificationPayload } from './notification'
+import type { CursorPosition, NotificationHandler, NotificationPayload } from './notification'
 
 /**
  * Collaborative Yjs document backed by Swarm persistent storage.
@@ -29,7 +29,7 @@ export interface ISwarmDoc {
    * Call from the editor's selection-change handler.
    * @param cursor Character index offsets `{ anchor, head }`, or `null` to clear.
    */
-  updateCursor(cursor: { anchor: number; head: number } | null): void
+  updateCursor(cursor: CursorPosition): void
 
   /** Returns the event emitter. Subscribe to `DOC_EVENTS` constants for doc lifecycle events. */
   getEmitter(): EventEmitter

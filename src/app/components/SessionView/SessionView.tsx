@@ -143,12 +143,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
         ) : null}
         {doc &&
           (docType === DocType.Code ? (
-            <MonacoEditor
-              yDoc={doc}
-              disabled={disableUntilConnected && !connected}
-              awareness={awareness}
-              onCursorChange={updateCursor}
-            />
+            <MonacoEditor yDoc={doc} awareness={awareness} onCursorChange={updateCursor} />
           ) : (
             <DocEditor
               yDoc={doc}

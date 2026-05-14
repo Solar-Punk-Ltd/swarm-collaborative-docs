@@ -1,3 +1,5 @@
+import { CursorPosition } from 'lib'
+
 export enum Transport {
   WEBRTC = 'webrtc',
   WAKU = 'waku',
@@ -52,5 +54,5 @@ export enum WebrtcMode {
 export interface AwarenessState {
   address: string
   username: string
-  cursor: { anchor: number; head: number } | null
+  cursor: CursorPosition
 }

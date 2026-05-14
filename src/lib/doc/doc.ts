@@ -8,7 +8,15 @@ import {
 } from '@solarpunkltd/comment-system'
 import * as Y from 'yjs'
 
-import { DocSettings, DocTransport, IMembers, ISwarmDoc, NotificationHandler, NotificationPayload } from '../interfaces'
+import {
+  CursorPosition,
+  DocSettings,
+  DocTransport,
+  IMembers,
+  ISwarmDoc,
+  NotificationHandler,
+  NotificationPayload,
+} from '../interfaces'
 import { validateStamps } from '../utils/bee'
 import { decode, encode, indexStrToBigint, remove0x, retryAwaitableAsync, uuidV4 } from '../utils/common'
 import { API_VERSION, DOC_FEED_SUFFIX, PLACEHOLDER_STAMP } from '../utils/constants'
@@ -44,7 +52,7 @@ export class SwarmDoc implements ISwarmDoc {
   private publishInFlight = false
   private fetchProcessRunning = false
   private memberListPollTimer: ReturnType<typeof setInterval> | null = null
-  private localCursor: { anchor: number; head: number } | null = null
+  private localCursor: CursorPosition = null
   private cursorTimer: ReturnType<typeof setInterval> | null = null
   private readonly logger = Logger.getInstance()
 
@@ -146,7 +154,7 @@ export class SwarmDoc implements ISwarmDoc {
     this.startCursorBroadcast()
   }
 
-  public updateCursor(cursor: { anchor: number; head: number } | null): void {
+  public updateCursor(cursor: CursorPosition): void {
     this.localCursor = cursor
   }
 

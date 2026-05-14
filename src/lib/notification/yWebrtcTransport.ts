@@ -1,7 +1,7 @@
 import { WebrtcProvider } from 'y-webrtc'
 
 import { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/doc'
-import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
+import type { CursorPosition, NotificationHandler, NotificationPayload } from '../interfaces/notification'
 import { remove0x } from '../utils/common'
 import { API_VERSION } from '../utils/constants'
 import { Logger } from '../utils/logger'
@@ -47,7 +47,7 @@ class YWebrtcTransport implements DocTransport {
             const state = states.get(clientId) as
               | {
                   user?: { address?: string; nickname?: string }
-                  cursor?: { anchor: number; head: number } | null
+                  cursor?: CursorPosition
                 }
               | undefined
 
