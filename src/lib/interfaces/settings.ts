@@ -14,12 +14,12 @@ export interface DocSettings {
     /** Bee node HTTP API URL (e.g. `"http://localhost:1633"`). */
     beeUrl: string
     /**
-     * Mutable postage batch ID (`immutableFlag = false`) used for all Swarm writes:
+     * Postage batch ID used for all Swarm writes:
      * document snapshots, notification feed entries, WebRTC signal records, and the
      * consensus member list. Required for publishing document changes.
      * Falls back to a placeholder value when omitted (useful in test environments).
      */
-    mutableStamp?: string
+    stamp?: string
     /** Shared room identifier. All peers in the same room must use the same `topic`. */
     topic: string
     /** Pre-seeded peer Ethereum addresses with usernames. Merged with the Swarm consensus member list at init. */

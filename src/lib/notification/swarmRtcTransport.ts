@@ -43,12 +43,7 @@ class SwarmRtcTransport implements DocTransport {
     private readonly iceServers: RTCIceServer[] | undefined,
     private readonly deps: DocTransportDeps,
   ) {
-    this.swarmSignal = new SwarmSignal(
-      this.deps.docFeedId,
-      this.deps.beeApiUrl,
-      this.deps.signer,
-      this.deps.mutableStampId,
-    )
+    this.swarmSignal = new SwarmSignal(this.deps.docFeedId, this.deps.beeApiUrl, this.deps.signer, this.deps.stampId)
   }
 
   start(): void {
@@ -482,7 +477,7 @@ class SwarmRtcTransport implements DocTransport {
 /**
  * Creates a `DocTransportFactory` using Swarm-signaled WebRTC for peer-to-peer sync.
  *
- * SDP offer/answer records are written to each peer's `_signal` Swarm mutable feed,
+ * SDP offer/answer records are written to each peer's `_signal` Swarm feed,
  * eliminating the need for a central signaling server. ICE gathering completes before
  * the SDP is written, so candidates are embedded rather than sent incrementally.
  *

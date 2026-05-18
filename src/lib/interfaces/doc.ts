@@ -91,8 +91,8 @@ export interface DocTransportDeps {
   beeApiUrl: string
   /** secp256k1 private key for signing Swarm feed writes. */
   signer: PrivateKey
-  /** Mutable postage batch ID for snapshot and signal writes. */
-  mutableStampId: string
+  /** Postage batch ID for snapshot and signal writes. */
+  stampId: string
 }
 
 /** Called once in the `SwarmDoc` constructor with resolved dependencies. Returns the transport instance. */

@@ -9,9 +9,9 @@ import {
   DEFAULT_SIGNALING_SERVER_URL,
   DISABLE_UNTIL_CONNECTED_KEY,
   DOCTYPE_KEY,
-  MUTABLE_STAMP_KEY,
   SESSION_KEY,
   SIGNALING_URL_KEY,
+  STAMP_KEY,
   STUN_URL_KEY,
   TOPIC_KEY,
   TRANSPORT_KEY,
@@ -42,8 +42,8 @@ export function loadTopic(): string {
   return localStorage.getItem(TOPIC_KEY) ?? uuidV4()
 }
 
-export function loadMutableStamp(): string {
-  return localStorage.getItem(MUTABLE_STAMP_KEY) ?? PLACEHOLDER_STAMP
+export function loadStamp(): string {
+  return localStorage.getItem(STAMP_KEY) ?? PLACEHOLDER_STAMP
 }
 
 export function loadSignalingUrl(): string {

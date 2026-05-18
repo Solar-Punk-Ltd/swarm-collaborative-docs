@@ -44,7 +44,7 @@ export class SwarmDoc implements ISwarmDoc {
   private docTopic: string
   private transport: DocTransport
   private beeApiUrl: string
-  private mutableStampId: string
+  private stampId: string
   private members: IMembers
 
   private pendingUpdates: Uint8Array[] = []
@@ -64,12 +64,12 @@ export class SwarmDoc implements ISwarmDoc {
     this.ownAddress = this.signer.publicKey().address().toString()
     this.username = settings.user.nickname
     this.beeApiUrl = settings.infra.beeUrl
-    this.mutableStampId = settings.infra.mutableStamp || PLACEHOLDER_STAMP
+    this.stampId = settings.infra.stamp || PLACEHOLDER_STAMP
 
     this.docFeedId = settings.infra.topic + DOC_FEED_SUFFIX
     this.docTopic = Topic.fromString(this.docFeedId).toString()
 
-    this.members = new Members(this.docFeedId, this.beeApiUrl, this.mutableStampId)
+    this.members = new Members(this.docFeedId, this.beeApiUrl, this.stampId)
 
     const configuredMembers = settings.infra.members
       ? Array.from(settings.infra.members.entries()).map(([addr, username]) => [remove0x(addr.toLowerCase()), username])
@@ -90,7 +90,7 @@ export class SwarmDoc implements ISwarmDoc {
       docFeedId: this.docFeedId,
       beeApiUrl: this.beeApiUrl,
       signer: this.signer,
-      mutableStampId: this.mutableStampId,
+      stampId: this.stampId,
     })
 
     for (const [memberAddress, memberUsername] of members) {
@@ -103,7 +103,7 @@ export class SwarmDoc implements ISwarmDoc {
       identifier: Topic.fromString(this.docFeedId + this.ownAddress).toString(),
       address: this.ownAddress,
       beeApiUrl: this.beeApiUrl,
-      stamp: this.mutableStampId,
+      stamp: this.stampId,
       signer: this.signer,
     }
   }
@@ -113,7 +113,7 @@ export class SwarmDoc implements ISwarmDoc {
       identifier: Topic.fromString(this.docFeedId + address).toString(),
       address,
       beeApiUrl: this.beeApiUrl,
-      stamp: this.mutableStampId,
+      stamp: this.stampId,
     }
   }
 
@@ -259,7 +259,7 @@ export class SwarmDoc implements ISwarmDoc {
 
   private async init(): Promise<void> {
     try {
-      await validateStamps(this.beeApiUrl, this.mutableStampId, MIN_TTL_WARN_DAYS, true, msg => {
+      await validateStamps(this.beeApiUrl, this.stampId, MIN_TTL_WARN_DAYS, msg => {
         this.logger.warn(`${TAG} ${msg}`)
         this.emitter.emit(DOC_EVENTS.DOC_ERROR, new Error(msg))
       })
