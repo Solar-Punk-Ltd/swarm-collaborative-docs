@@ -27,7 +27,7 @@ export interface SignalFeedPayload {
 }
 
 /**
- * Reads and writes WebRTC signaling records to a per-user Swarm mutable feed.
+ * Reads and writes WebRTC signaling records to a per-user Swarm feed.
  *
  * Writes are serialised to prevent index conflicts when `clearOwn` and `writeRecord` run concurrently.
  * Used exclusively by `SwarmRtcTransport`.

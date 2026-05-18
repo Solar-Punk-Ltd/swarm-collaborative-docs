@@ -11,4 +11,3 @@ node_modules/
 .env.*
 !.env.development
 dist
-docs/

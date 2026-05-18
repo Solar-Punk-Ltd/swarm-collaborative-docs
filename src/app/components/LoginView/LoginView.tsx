@@ -10,9 +10,9 @@ import {
   DEFAULT_SIGNALING_SERVER_URL,
   DEFAULT_TOPIC,
   DOCTYPE_KEY,
-  MUTABLE_STAMP_KEY,
   SESSION_KEY,
   SIGNALING_URL_KEY,
+  STAMP_KEY,
   STUN_URL_KEY,
   TOPIC_KEY,
   TRANSPORT_KEY,
@@ -28,11 +28,11 @@ const BUTTON_TIMEOUT_MS = 1500
 interface LoginViewProps {
   username?: string
   beeUrl: string
-  mutableStamp: string
+  stamp: string
   topic: string
   disableUntilConnected: boolean
   onBeeUrlChange: (url: string) => void
-  onMutableStampChange: (v: string) => void
+  onStampChange: (v: string) => void
   onTopicChange: (v: string) => void
   onDisableUntilConnectedChange: (v: boolean) => void
   onLogin: (opts: SessionOpts) => void
@@ -44,11 +44,11 @@ const DocTypes = [DocType.Code, DocType.Document] as const
 export const LoginView: React.FC<LoginViewProps> = ({
   username,
   beeUrl,
-  mutableStamp,
+  stamp,
   topic,
   disableUntilConnected,
   onBeeUrlChange,
-  onMutableStampChange,
+  onStampChange,
   onTopicChange,
   onDisableUntilConnectedChange,
   onLogin,
@@ -131,7 +131,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
     setValidating(true)
 
     try {
-      await validateStamps(beeUrl, mutableStamp)
+      await validateStamps(beeUrl, stamp)
     } catch (err) {
       setPageError((err as Error).message)
       setValidating(false)
@@ -155,7 +155,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
     const peer = brokerPeer.trim() || undefined
 
     onLogin({ username: name, transport, topic, docType, signalingUrl, stunUrl, brokerPeer: peer })
-  }, [inputName, transport, topic, webrtcMode, docType, brokerPeer, beeUrl, mutableStamp, onLogin, serverUrl])
+  }, [inputName, transport, topic, webrtcMode, docType, brokerPeer, beeUrl, stamp, onLogin, serverUrl])
 
   return (
     <div className="login-view">
@@ -296,13 +296,13 @@ export const LoginView: React.FC<LoginViewProps> = ({
               <div className="login-view__field">
                 <label className="login-view__field-label">Postage stamp</label>
                 <input
-                  value={mutableStamp}
-                  onChange={e => onMutableStampChange(e.target.value)}
-                  onBlur={() => localStorage.setItem(MUTABLE_STAMP_KEY, mutableStamp)}
+                  value={stamp}
+                  onChange={e => onStampChange(e.target.value)}
+                  onBlur={() => localStorage.setItem(STAMP_KEY, stamp)}
                   placeholder={PLACEHOLDER_STAMP}
                   className="login-view__field-input login-view__field-input--mono"
                 />
-                {(!mutableStamp || mutableStamp === PLACEHOLDER_STAMP) && (
+                {(!stamp || stamp === PLACEHOLDER_STAMP) && (
                   <span className="login-view__stamp-warning">
                     <AlertTriangle size={12} />
                     No stamp set — uploads will rely on a gateway
