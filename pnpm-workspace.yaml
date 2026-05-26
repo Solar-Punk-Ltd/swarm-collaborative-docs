@@ -5,3 +5,5 @@ allowBuilds:
   '@ethersphere/bee-js': true
   '@parcel/watcher': true
   unrs-resolver: true
+
+blockExoticSubdeps: false
