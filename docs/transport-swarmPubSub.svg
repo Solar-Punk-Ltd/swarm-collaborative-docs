@@ -1,0 +1,79 @@
+<svg width="100%" viewBox="0 0 520 560" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>SwarmPubSub transport — infrastructure diagram</title>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <style>
+    text { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; fill: #1a1a1a; }
+    .th  { font-size: 14px; font-weight: 500; }
+    .ts  { font-size: 12px; }
+    .sub { fill: #5F5E5A; }
+    .lbl { font-size: 11px; fill: #888780; }
+    .layer-teal  { fill: #E1F5EE; stroke: #1D9E75; stroke-width: 0.5; }
+    .inner-teal  { fill: #C2ECD9; stroke: #1D9E75; stroke-width: 0.5; }
+    .layer-blue  { fill: #E6F1FB; stroke: #378ADD; stroke-width: 0.5; }
+    .inner-blue  { fill: #C8DFF6; stroke: #378ADD; stroke-width: 0.5; }
+    .layer-amber { fill: #FEF3DC; stroke: #BA7517; stroke-width: 0.5; }
+    .inner-amber { fill: #FAC775; stroke: #BA7517; stroke-width: 0.5; }
+    .layer-coral { fill: #FAECE7; stroke: #D85A30; stroke-width: 0.5; }
+    .text-teal   { fill: #0F6E56; }
+    .text-blue   { fill: #0C447C; }
+    .text-amber  { fill: #633806; }
+    .text-coral  { fill: #993C1D; }
+  </style>
+</defs>
+
+<!-- Title + experimental badge -->
+<rect x="20" y="16" width="480" height="36" rx="8" class="layer-coral"/>
+<text class="th text-coral" x="230" y="38" text-anchor="middle">SwarmPubSub Transport</text>
+<rect x="370" y="22" width="122" height="24" rx="6" class="inner-amber"/>
+<text class="th text-amber" x="431" y="38" text-anchor="middle">⚠️ Experimental</text>
+
+<!-- Peer A -->
+<rect x="20" y="68" width="220" height="96" rx="10" class="layer-teal"/>
+<text class="th text-teal" x="130" y="90" text-anchor="middle">Peer A (browser)</text>
+<rect x="36" y="100" width="188" height="52" rx="6" class="inner-teal"/>
+<text class="th text-teal" x="130" y="120" text-anchor="middle">SwarmDoc</text>
+<text class="ts sub" x="130" y="138" text-anchor="middle">publish / subscribe JSON payloads</text>
+
+<!-- Peer B -->
+<rect x="280" y="68" width="220" height="96" rx="10" class="layer-teal"/>
+<text class="th text-teal" x="390" y="90" text-anchor="middle">Peer B (browser)</text>
+<rect x="296" y="100" width="188" height="52" rx="6" class="inner-teal"/>
+<text class="th text-teal" x="390" y="120" text-anchor="middle">SwarmDoc</text>
+<text class="ts sub" x="390" y="138" text-anchor="middle">publish / subscribe JSON payloads</text>
+
+<!-- Broker Bee node -->
+<rect x="100" y="210" width="320" height="110" rx="10" class="layer-amber"/>
+<text class="th text-amber" x="260" y="232" text-anchor="middle">Broker Bee node  (GSOC-capable, dev branch)</text>
+<rect x="116" y="244" width="288" height="36" rx="6" class="inner-amber"/>
+<text class="th text-amber" x="260" y="262" text-anchor="middle">GSOC ephemeral pubsub</text>
+<text class="ts sub" x="260" y="278" text-anchor="middle">all peers subscribe to the same topic address</text>
+<rect x="116" y="288" width="288" height="20" rx="4" style="fill:#FAC77560; stroke:none;"/>
+<text class="lbl" x="260" y="302" text-anchor="middle">topic derived deterministically from docFeedId</text>
+
+<!-- Own Bee node (snapshot persistence) -->
+<rect x="100" y="340" width="320" height="90" rx="10" class="layer-blue"/>
+<text class="th text-blue" x="260" y="362" text-anchor="middle">Bee node  (local or gateway)</text>
+<rect x="116" y="374" width="130" height="44" rx="6" class="inner-blue"/>
+<text class="th text-blue" x="181" y="393" text-anchor="middle">Swarm feeds</text>
+<text class="ts sub" x="181" y="409" text-anchor="middle">doc snapshots</text>
+<rect x="274" y="374" width="130" height="44" rx="6" class="inner-blue"/>
+<text class="th text-blue" x="339" y="393" text-anchor="middle">Member feed</text>
+<text class="ts sub" x="339" y="409" text-anchor="middle">peer discovery</text>
+
+<!-- Arrows: peers → broker WS -->
+<path d="M130 164 L130 192 L200 192 L200 210" fill="none" stroke="#BA7517" stroke-width="1" marker-end="url(#arrow)"/>
+<text class="lbl" x="136" y="200">WS connect</text>
+<path d="M390 164 L390 192 L320 192 L320 210" fill="none" stroke="#BA7517" stroke-width="1" marker-end="url(#arrow)"/>
+<!-- Broker → Bee (snapshot, dashed) -->
+<path d="M260 320 L260 340" fill="none" stroke="#888" stroke-width="0.8" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+<text class="lbl" x="268" y="335">snapshot</text>
+
+<!-- Legend -->
+<line x1="26" y1="470" x2="56" y2="470" stroke="#BA7517" stroke-width="1" marker-end="url(#arrow)"/>
+<text class="lbl" x="64" y="474">WebSocket (GSOC pubsub)</text>
+<line x1="26" y1="492" x2="56" y2="492" stroke="#888" stroke-width="0.8" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+<text class="lbl" x="64" y="496">Swarm snapshot persistence</text>
+</svg>

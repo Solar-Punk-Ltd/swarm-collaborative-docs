@@ -1,0 +1,7 @@
+overrides:
+  '@ethersphere/bee-js': 'github:Apiary-Suite/bee-js'
+
+allowBuilds:
+  '@ethersphere/bee-js': true
+  '@parcel/watcher': true
+  unrs-resolver: true

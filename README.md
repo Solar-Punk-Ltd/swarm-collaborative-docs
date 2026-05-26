@@ -56,17 +56,18 @@ their original content addresses for as long as the underlying chunks are covere
 
 ### Postage stamps and storage lifetime
 
-Swarm storage is paid for through **postage stamps** — on-chain commitments that authorise uploads and determine how
-long chunks persist in the network.
+Swarm storage is paid for through **postage stamp batches** — on-chain commitments that authorise uploads and determine
+how long chunks persist in the network.
 
-This library's `stamp` setting accepts any postage batch the application provides. How stamps are provisioned, renewed,
-and distributed across users is entirely the responsibility of the consuming application. Common patterns include:
+This library's `stamp` setting accepts any postage stamp batch ID the application provides. How batches are purchased,
+renewed, and distributed across users is entirely the responsibility of the consuming application. Common patterns
+include:
 
-- **Per-user stamps** — each user purchases and manages their own stamp. Maximally decentralised; each peer owns their
-  data.
-- **App-provisioned stamps** — the application provisions a shared stamp and distributes write access. Simpler UX but
+- **Per-user batches** — each user purchases and manages their own postage stamp batch. Maximally decentralised; each
+  peer owns their data.
+- **App-provisioned batches** — the application provisions a shared batch and distributes write access. Simpler UX but
   introduces a centralised cost bearer.
-- **Sponsored stamps** — a third party (the app operator, a DAO) covers storage costs on behalf of users.
+- **Sponsored batches** — a third party (the app operator, a DAO) covers storage costs on behalf of users.
 
 There is no single correct answer — the right model depends on the application's trust assumptions and economic design.
 
@@ -75,9 +76,25 @@ There is no single correct answer — the right model depends on the application
 The `<topic>_members` consensus feed used by this library is **one approach** to peer discovery, not a requirement. It
 works well for small, known groups where all members write to a shared namespace. Applications are free to replace or
 extend it entirely — for example using ENS records, a smart contract registry, a curated invite list, or any other
-mechanism that can resolve a set of Ethereum addresses. The `members` field in `DocSettings` accepts a pre-seeded
-`Map<address, username>` for exactly this purpose: bring your own discovery layer and hand the resolved peer set to
-`SwarmDoc`.
+mechanism that can resolve a set of Ethereum addresses.
+
+To use a custom discovery layer, resolve your peer set externally and pass it to `SwarmDoc` via the `members` field in
+`DocSettings`. The library will skip its own consensus feed and use the provided map as the initial peer list:
+
+```typescript
+const knownPeers = new Map([
+  ['a1b2c3...', 'Alice'],
+  ['d4e5f6...', 'Bob'],
+])
+
+const settings: DocSettings = {
+  ...
+  infra: {
+    ...
+    members: knownPeers, // peer discovery handled externally
+  },
+}
+```
 
 ---
 
@@ -85,9 +102,28 @@ mechanism that can resolve a set of Ethereum addresses. The `members` field in `
 
 ![Architecture overview](./docs/architecture-overview.svg)
 
-## Transport flows
+### Per-transport infrastructure
 
-![Transport flows](./docs/transport-flows.svg)
+Each diagram shows the full infrastructure picture for a single transport — peers, Swarm components, external services,
+and data paths.
+
+![SwarmRtc transport](./docs/transport-swarmRtc.svg)
+
+![SwarmPubSub transport](./docs/transport-swarmPubSub.svg)
+
+![yWebrtc transport](./docs/transport-yWebrtc.svg)
+
+## Transport data flows
+
+Step-by-step flow comparison for peer discovery, connection setup, doc sync, snapshot persistence, and cursor awareness.
+
+**SwarmRtc vs yWebrtc** — the two recommended transports:
+
+![Transport flows — SwarmRtc vs yWebrtc](./docs/transport-flows.svg)
+
+**SwarmPubSub vs Waku** — the two experimental transports:
+
+![Transport flows — SwarmPubSub vs Waku](./docs/transport-flows-pubsub-waku.svg)
 
 ---
 
@@ -356,7 +392,11 @@ transport: createYWebrtcTransport('wss://your-signaling-server.example' /* , ice
 
 ### `createWakuTransport`
 
-**Best for**: decentralised real-time notifications without a Bee node dependency.
+> ⚠️ **Not recommended for production** — this transport depends on the public Waku sandbox network, which has no
+> reliability guarantees. Message delivery is inconsistent and bootstrap peer availability is not guaranteed. Consider
+> this transport experimental until dedicated infrastructure or a stable Waku fleet can be provided.
+
+**Best for**: decentralised real-time notifications without a Bee node dependency, in development or research contexts.
 
 Connects to the [Waku](https://waku.org) network via a libp2p light node using LightPush (send) and Filter (receive)
 protocols. Payloads are JSON `NotificationPayload` objects. Node initialisation is asynchronous; calls made before the
@@ -521,15 +561,15 @@ The app runs at `http://localhost:5002`.
 
 ## Future improvements
 
-### Encryption
+### End-to-end encryption
 
 Currently all document snapshots and deltas are stored and transmitted in plaintext. Anyone with access to the Swarm
-feed address and a Bee node can read the content. Two complementary approaches to this problem:
+feed address and a Bee node can read the content. Two complementary approaches are planned:
 
 **Client-side encryption** — encrypt the `Y.Doc` snapshot bytes in the browser before uploading to Swarm, and decrypt
-after fetching. The encryption key would be derived from a shared secret negotiated between session participants and
-never leave the browser. This protects content at rest from any observer with access to the Swarm network, including the
-Bee gateway operator.
+after fetching. The encryption key would be derived from a shared secret negotiated between session participants (e.g.
+via ECDH over their Ethereum keys) and never leave the browser. This protects content at rest from any observer with
+access to the Swarm network, including the Bee gateway operator.
 
 **Swarm ACT (Access Control Trie)** — Swarm's native access control layer allows uploads to be encrypted such that only
 designated grantees can decrypt them, with access managed on-chain via a publisher/history address scheme. Integrating
@@ -547,15 +587,16 @@ The current implementation derives the user's identity from a raw secp256k1 priv
 `DocSettings.user.privateKey`. This couples the user's signing key to the application and requires the application to
 manage key material directly — a security risk and a poor user experience.
 
-Possible improvements:
+Several improvements are planned:
 
-**Wallet connection** — instead of accepting a raw private key, the library would accept any
-[EIP-1193](https://eips.ethereum.org/EIPS/eip-1193)-compatible provider (MetaMask, WalletConnect etc.). The user's
-Ethereum account would be used for signing feed updates and delta payloads without the private key ever being exposed to
-the application. This also gives users a consistent identity across applications — the same Ethereum address they use
-for on-chain interactions identifies them in collaborative sessions.
+**Wallet connection (MetaMask and EIP-1193 providers)** — instead of accepting a raw private key, the library would
+accept any [EIP-1193](https://eips.ethereum.org/EIPS/eip-1193)-compatible provider (MetaMask, WalletConnect, Coinbase
+Wallet, etc.). The user's Ethereum account would be used for signing feed updates and delta payloads without the private
+key ever being exposed to the application. This also gives users a consistent identity across applications — the same
+Ethereum address they use for on-chain interactions identifies them in collaborative sessions.
 
 ```typescript
+// future API sketch
 const settings: DocSettings = {
   user: {
     provider: window.ethereum, // any EIP-1193 provider, replaces privateKey
@@ -574,6 +615,16 @@ identity. Feed updates would be signed client-side and submitted to whichever no
 delegated session key (an ephemeral key authorised by a one-time wallet signature) could be used for the duration of a
 session. The main wallet key establishes identity; the session key handles the high-frequency signing required for
 real-time edits.
+
+---
+
+### Persistent session and presence
+
+A user's online/offline status, active document, and last-seen time currently exist only in the ephemeral transport
+layer (awareness state) and are lost when the session ends. Persisting presence information to a per-user Swarm feed
+would enable asynchronous collaboration workflows — seeing who last edited a document, when, and from which peer —
+without requiring all participants to be online simultaneously. This would build naturally on top of the wallet identity
+work above, since a stable Ethereum address is the natural key for a persistent presence record.
 
 ## License
 
