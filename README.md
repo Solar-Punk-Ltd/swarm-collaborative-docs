@@ -201,6 +201,28 @@ yDoc.getText('scripts/deploy.ts')
 Pass the file path as the `filePathKey` prop to `MonacoEditor`. All open files share the same Swarm transport session —
 no extra connections are needed.
 
+### Alternative: `@monaco-editor/react`
+
+Some applications use [`@monaco-editor/react`](https://github.com/suren-atoyan/monaco-react) instead of importing
+`monaco-editor` directly. This package is a React wrapper that lazy-loads Monaco at runtime rather than bundling it at
+build time, and manages the editor instance lifecycle as a declarative component.
+
+The key difference is how Monaco is loaded:
+
+```ts
+loader.config({ paths: { vs: 'assets/js/monaco-editor/min/vs' } })
+```
+
+Because Monaco is loaded via the browser's script loader rather than Vite, there is no need for `MonacoEnvironment`,
+`?worker` imports, or any bundler plugin. Workers are resolved automatically from the same `vs/` path.
+
+The `MonacoBinding` wiring is identical — you receive the same editor instance via the `onMount` callback and bind it to
+`Y.Text` exactly as before.
+
+This approach is preferable when Monaco is already served as a static asset by the host application, avoiding a
+duplicate bundled copy. The cursor rendering and awareness logic described above applies unchanged regardless of which
+loading approach is used.
+
 ---
 
 ## Library API (`src/lib`)
