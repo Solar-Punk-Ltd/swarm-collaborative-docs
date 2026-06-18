@@ -5,6 +5,7 @@ import {
   createWakuTransport,
   createYWebrtcTransport,
   DocSettings,
+  PeerConnectionState,
   PLACEHOLDER_STAMP,
 } from 'lib'
 import { Copy, FileText, LogOut, RefreshCw, Settings, Users } from 'lucide-react'
@@ -32,7 +33,6 @@ interface SessionViewProps {
   stamp: string
   topic: string
   docType: DocType
-  disableUntilConnected: boolean
   onBeeUrlChange: (url: string) => void
   onStampChange: (v: string) => void
   onTopicChange: (v: string) => void
@@ -45,7 +45,6 @@ export const SessionView: React.FC<SessionViewProps> = ({
   stamp,
   topic,
   docType,
-  disableUntilConnected,
   onBeeUrlChange,
   onStampChange,
   onTopicChange,
@@ -125,7 +124,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
     stamp,
   ])
 
-  const { doc, error, members, connected, awareness, updateCursor, refreshMemberList, dismissError } =
+  const { doc, error, members, peerStates, connected, awareness, updateCursor, refreshMemberList, dismissError } =
     useSwarmDoc(docConfig)
 
   const transportLabel = TRANSPORT_LABELS[session.transport]
@@ -145,12 +144,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
           (docType === DocType.Code ? (
             <MonacoEditor yDoc={doc} awareness={awareness} onCursorChange={updateCursor} />
           ) : (
-            <DocEditor
-              yDoc={doc}
-              disabled={disableUntilConnected && !connected}
-              awareness={awareness}
-              onCursorChange={updateCursor}
-            />
+            <DocEditor yDoc={doc} disabled={!connected} awareness={awareness} onCursorChange={updateCursor} />
           ))}
       </div>
     )
@@ -162,10 +156,15 @@ export const SessionView: React.FC<SessionViewProps> = ({
     const membersBlock: ReactNode[] = []
 
     for (const [addr, username] of members) {
+      const state = peerStates.get(addr) ?? PeerConnectionState.Registered
+      const connected = state === PeerConnectionState.Connected
+      const chipClass = `session-view__member-chip${connected ? ' session-view__member-chip--connected' : ''}`
+      const dotClass = `session-view__member-dot${connected ? ' session-view__member-dot--connected' : ''}`
+
       membersBlock.push(
-        <span key={addr} className="session-view__member-chip">
+        <span key={addr} className={chipClass} title={state}>
           <span
-            className="session-view__member-dot"
+            className={dotClass}
             aria-hidden="true"
             style={{ background: colorForAddress(addr), boxShadow: `0 0 0 2px ${colorForAddress(addr)}33` }}
           />
@@ -177,7 +176,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
     }
 
     return membersBlock
-  }, [members])
+  }, [members, peerStates])
 
   return (
     <div className="session-view">

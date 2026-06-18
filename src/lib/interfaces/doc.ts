@@ -3,6 +3,7 @@ import * as Y from 'yjs'
 
 import { EventEmitter } from '../utils/eventEmitter'
 
+import { IMembers } from './members'
 import type { CursorPosition, NotificationHandler, NotificationPayload } from './notification'
 
 /**
@@ -73,12 +74,7 @@ export interface DocTransportDeps {
   /** Event emitter for surfacing `DOC_EVENTS` to the application layer. */
   emitter: { emit(event: string, ...args: unknown[]): void }
   /** Accessor for the current peer set. */
-  members: {
-    /** Returns all registered peers (address → username). */
-    all(): ReadonlyMap<string, string>
-    /** Returns `true` if `address` is in the registered set. */
-    has(address: string): boolean
-  }
+  members: IMembers
   /** Ethereum address of the local user (hex, no 0x prefix). */
   ownAddress: string
   /** Display name of the local user. */

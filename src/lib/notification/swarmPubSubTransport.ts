@@ -1,6 +1,7 @@
 import { Bee, PubsubMode, PubsubSubscription } from '@ethersphere/bee-js'
 
 import { DOC_EVENTS } from '../doc/events'
+import { PeerConnectionState } from '../interfaces'
 import type { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/doc'
 import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
 import { ErrorHandler } from '../utils/error'
@@ -50,7 +51,12 @@ class SwarmPubSubDocTransport implements DocTransport {
     }
   }
 
-  connectToPeer(_address: string): void {}
+  connectToPeer(address: string): void {
+    if (this.isConnected) {
+      this.deps.members.setConnectionState(address, PeerConnectionState.Connected)
+      this.deps.emitter.emit(DOC_EVENTS.PEER_STATE_UPDATED, this.deps.members.allConnectionStates())
+    }
+  }
 
   isRemoteOrigin(_origin: unknown): boolean {
     return false
@@ -72,6 +78,10 @@ class SwarmPubSubDocTransport implements DocTransport {
           this.isConnecting = false
           this.isConnected = true
           this.deps.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
+          for (const addr of this.deps.members.all().keys()) {
+            this.deps.members.setConnectionState(addr, PeerConnectionState.Connected)
+          }
+          this.deps.emitter.emit(DOC_EVENTS.PEER_STATE_UPDATED, this.deps.members.allConnectionStates())
           this.logger.log(`${TAG} connected, docFeedId=${this.deps.docFeedId}`)
 
           const toSend = this.pendingPublishes.splice(0)
@@ -105,6 +115,10 @@ class SwarmPubSubDocTransport implements DocTransport {
             this.subscription = null
             this.isConnecting = false
             this.isConnected = false
+            for (const addr of this.deps.members.all().keys()) {
+              this.deps.members.setConnectionState(addr, PeerConnectionState.Registered)
+            }
+            this.deps.emitter.emit(DOC_EVENTS.PEER_STATE_UPDATED, this.deps.members.allConnectionStates())
             setTimeout(() => this.connect(), WS_RECONNECT_TIMEOUT_MS)
           }
         },

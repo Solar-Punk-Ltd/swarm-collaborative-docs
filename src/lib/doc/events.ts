@@ -16,4 +16,6 @@ export const DOC_EVENTS = {
    * `cursor: null` means the peer deselected or disconnected.
    */
   AWARENESS_UPDATED: 'awarenessUpdated',
+  /** Fired when any peer's connection state changes. Payload: `ReadonlyMap<string, PeerConnectionState>`. */
+  PEER_STATE_UPDATED: 'peerStateUpdated',
 }

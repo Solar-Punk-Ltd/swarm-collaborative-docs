@@ -3,8 +3,7 @@ import React, { useState } from 'react'
 import { LoginView } from '../components/LoginView/LoginView'
 import { SessionView } from '../components/SessionView/SessionView'
 import { useSession } from '../hooks/useSession'
-import { DISABLE_UNTIL_CONNECTED_KEY } from '../utils/constants'
-import { loadBeeUrl, loadDisableUntilConnected, loadStamp, loadTopic, loadUsername } from '../utils/localStorage'
+import { loadBeeUrl, loadStamp, loadTopic, loadUsername } from '../utils/localStorage'
 import { DocType } from '../utils/types'
 
 const App: React.FC = () => {
@@ -16,12 +15,6 @@ const App: React.FC = () => {
   const [username, setUsername] = useState(loadUsername())
   const [docType, setDocType] = useState<DocType>(DocType.Document)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
-  const [disableUntilConnected, setDisableUntilConnected] = useState(loadDisableUntilConnected())
-
-  const handleDisableUntilConnectedChange = (v: boolean) => {
-    setDisableUntilConnected(v)
-    localStorage.setItem(DISABLE_UNTIL_CONNECTED_KEY, String(v))
-  }
 
   if (!isLoggedIn || !session) {
     return (
@@ -30,11 +23,9 @@ const App: React.FC = () => {
         beeUrl={beeUrl}
         topic={topic}
         stamp={stamp}
-        disableUntilConnected={disableUntilConnected}
         onBeeUrlChange={setBeeUrl}
         onStampChange={setStamp}
         onTopicChange={setTopic}
-        onDisableUntilConnectedChange={handleDisableUntilConnectedChange}
         onLogin={opts => {
           login(opts)
           setUsername(opts.username)
@@ -52,7 +43,6 @@ const App: React.FC = () => {
       topic={topic}
       stamp={stamp}
       docType={docType}
-      disableUntilConnected={disableUntilConnected}
       onBeeUrlChange={setBeeUrl}
       onStampChange={setStamp}
       onTopicChange={setTopic}

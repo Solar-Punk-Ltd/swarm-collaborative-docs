@@ -1,4 +1,4 @@
-import { CursorPosition, DOC_EVENTS, DocSettings, ISwarmDoc, SwarmDoc } from 'lib'
+import { CursorPosition, DOC_EVENTS, DocSettings, ISwarmDoc, PeerConnectionState, SwarmDoc } from 'lib'
 import { useEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
 
@@ -8,6 +8,7 @@ export interface SwarmDocContext {
   doc: Y.Doc | null
   error: Error | null
   members: Map<string, string> | null
+  peerStates: Map<string, PeerConnectionState>
   connected: boolean
   awareness: Map<string, AwarenessState>
   updateCursor: (cursor: CursorPosition) => void
@@ -28,6 +29,7 @@ export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
     connected: false,
   })
   const [awareness, setAwareness] = useState<Map<string, AwarenessState>>(new Map())
+  const [peerStates, setPeerStates] = useState<Map<string, PeerConnectionState>>(new Map())
 
   const dismissError = () => {
     setStatus(prev => (error ? { ...prev, error: null } : prev))
@@ -50,6 +52,9 @@ export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
     swarmDoc.getEmitter().on(DOC_EVENTS.AWARENESS_UPDATED, (update: AwarenessState) => {
       setAwareness(prev => new Map(prev).set(update.address, update))
     })
+    swarmDoc.getEmitter().on(DOC_EVENTS.PEER_STATE_UPDATED, (states: Map<string, PeerConnectionState>) => {
+      setPeerStates(new Map(states))
+    })
 
     swarmDoc.start()
     setDoc(swarmDoc.doc)
@@ -60,6 +65,7 @@ export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
       setDoc(null)
       setStatus({ error: null, members: null, connected: false })
       setAwareness(new Map())
+      setPeerStates(new Map())
     }
   }, [user, infra])
 
@@ -71,5 +77,5 @@ export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
     docRef.current?.updateCursor(cursor)
   }
 
-  return { doc, error, members, connected, awareness, updateCursor, refreshMemberList, dismissError }
+  return { doc, error, members, peerStates, connected, awareness, updateCursor, refreshMemberList, dismissError }
 }

@@ -1,7 +1,7 @@
 import * as Y from 'yjs'
 
 import { DOC_EVENTS } from '../doc/events'
-import { ISwarmSignal, SignalRecord, SignalType } from '../interfaces'
+import { ISwarmSignal, PeerConnectionState, SignalRecord, SignalType } from '../interfaces'
 import { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/doc'
 import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
 import { Origin, uuidV4 } from '../utils/common'
@@ -119,6 +119,7 @@ class SwarmRtcTransport implements DocTransport {
       this.logger.debug(`${TAG} [initiator→${peerAddress.slice(0, 8)}] connectionState=${pc.connectionState}`)
 
       if (pc.connectionState === 'failed') {
+        pc.close()
         this.swarmRtcPeers.delete(peerAddress)
         this.pendingOfferSessions.delete(peerAddress)
         this.logger.debug(`${TAG} [initiator→${peerAddress.slice(0, 8)}] ICE failed — retrying in 10s`)
@@ -212,6 +213,7 @@ class SwarmRtcTransport implements DocTransport {
       this.logger.debug(`${TAG} [answerer←${peerAddress.slice(0, 8)}] connectionState=${pc.connectionState}`)
 
       if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        pc.close()
         this.swarmRtcPeers.delete(peerAddress)
       }
     })
@@ -408,6 +410,8 @@ class SwarmRtcTransport implements DocTransport {
   private setupDataChannel(peerAddress: string, channel: RTCDataChannel): void {
     this.logger.debug(`${TAG} channel OPEN with ${peerAddress.slice(0, 8)}…`)
     this.deps.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
+    this.deps.members.setConnectionState(peerAddress, PeerConnectionState.Connected)
+    this.deps.emitter.emit(DOC_EVENTS.PEER_STATE_UPDATED, this.deps.members.allConnectionStates())
     channel.binaryType = CHANNEL_BINARY_TYPE
     this.openChannels.set(peerAddress, channel)
 
@@ -450,6 +454,8 @@ class SwarmRtcTransport implements DocTransport {
       const pc = this.swarmRtcPeers.get(peerAddress)
       this.swarmRtcPeers.delete(peerAddress)
       pc?.close()
+      this.deps.members.setConnectionState(peerAddress, PeerConnectionState.Registered)
+      this.deps.emitter.emit(DOC_EVENTS.PEER_STATE_UPDATED, this.deps.members.allConnectionStates())
       this.logger.debug(`${TAG} channel CLOSED with ${peerAddress.slice(0, 8)}…`)
     })
   }

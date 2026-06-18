@@ -30,11 +30,9 @@ interface LoginViewProps {
   beeUrl: string
   stamp: string
   topic: string
-  disableUntilConnected: boolean
   onBeeUrlChange: (url: string) => void
   onStampChange: (v: string) => void
   onTopicChange: (v: string) => void
-  onDisableUntilConnectedChange: (v: boolean) => void
   onLogin: (opts: SessionOpts) => void
 }
 
@@ -46,11 +44,9 @@ export const LoginView: React.FC<LoginViewProps> = ({
   beeUrl,
   stamp,
   topic,
-  disableUntilConnected,
   onBeeUrlChange,
   onStampChange,
   onTopicChange,
-  onDisableUntilConnectedChange,
   onLogin,
 }) => {
   const [inputName, setInputName] = useState(username ?? '')
@@ -309,15 +305,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   </span>
                 )}
               </div>
-
-              <label className="login-view__checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={disableUntilConnected}
-                  onChange={e => onDisableUntilConnectedChange(e.target.checked)}
-                />
-                Disable editing until peer connected
-              </label>
 
               {transport === Transport.SWARM_PUBSUB && (
                 <div className="login-view__field">

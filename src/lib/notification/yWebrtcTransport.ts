@@ -1,5 +1,7 @@
 import { WebrtcProvider } from 'y-webrtc'
 
+import { DOC_EVENTS } from '../doc/events'
+import { PeerConnectionState } from '../interfaces'
 import { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/doc'
 import type { CursorPosition, NotificationHandler, NotificationPayload } from '../interfaces/notification'
 import { remove0x } from '../utils/common'
@@ -60,6 +62,9 @@ class YWebrtcTransport implements DocTransport {
                 this.clientIdToAddress.set(clientId, address)
               }
 
+              this.deps.members.setConnectionState(address, PeerConnectionState.Connected)
+              this.deps.emitter.emit(DOC_EVENTS.PEER_STATE_UPDATED, this.deps.members.allConnectionStates())
+
               if (this.handler && state) {
                 this.handler({
                   type: 'cursor',
@@ -76,6 +81,11 @@ class YWebrtcTransport implements DocTransport {
 
         for (const clientId of removed) {
           const address = this.getAddressForClientId(clientId)
+
+          if (address) {
+            this.deps.members.setConnectionState(address, PeerConnectionState.Registered)
+            this.deps.emitter.emit(DOC_EVENTS.PEER_STATE_UPDATED, this.deps.members.allConnectionStates())
+          }
 
           if (address && this.handler) {
             this.handler({

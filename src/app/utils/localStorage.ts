@@ -7,7 +7,6 @@ import {
   DEFAULT_BROKER_PEER,
   DEFAULT_ICE_SERVER_URL,
   DEFAULT_SIGNALING_SERVER_URL,
-  DISABLE_UNTIL_CONNECTED_KEY,
   DOCTYPE_KEY,
   SESSION_KEY,
   SIGNALING_URL_KEY,
@@ -68,8 +67,4 @@ export function loadWakuAddress(): string {
 
 export function loadBrokerPeer(): string {
   return localStorage.getItem(BROKER_PEER_KEY) || DEFAULT_BROKER_PEER
-}
-
-export function loadDisableUntilConnected(): boolean {
-  return localStorage.getItem(DISABLE_UNTIL_CONNECTED_KEY) === 'true'
 }

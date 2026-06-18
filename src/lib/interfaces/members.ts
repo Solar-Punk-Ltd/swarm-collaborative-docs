@@ -1,3 +1,11 @@
+/** Live transport connection state for a registered peer. */
+export enum PeerConnectionState {
+  /** Peer is known from the consensus feed but no live channel is open. */
+  Registered = 'registered',
+  /** An active data channel (or equivalent) is open with this peer. */
+  Connected = 'connected',
+}
+
 /**
  * Manages the set of known peers for a collaborative doc session.
  *
@@ -25,6 +33,12 @@ export interface IMembers {
 
   /** Records the latest applied Swarm feed index for `address`. */
   setIndex(address: string, index: bigint): void
+
+  /** Updates the live connection state for `address`. */
+  setConnectionState(address: string, state: PeerConnectionState): void
+
+  /** Returns a shallow copy of the connection-state map. Absent entries default to `Registered`. */
+  allConnectionStates(): ReadonlyMap<string, PeerConnectionState>
 
   /** Reads the current member list from the Swarm consensus feed. Returns `null` if the feed does not exist yet. */
   read(): Promise<Map<string, string> | null>

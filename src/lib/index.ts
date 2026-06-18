@@ -21,6 +21,7 @@ export type {
   ISwarmSignal,
   CursorPosition,
 } from './interfaces'
+export { PeerConnectionState } from './interfaces'
 
 export { getSigner, validateStamps } from './utils/bee'
 export { indexStrToBigint, uuidV4 } from './utils/common'

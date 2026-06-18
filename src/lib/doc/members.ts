@@ -1,6 +1,6 @@
 import { Bee, FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
 
-import { IMembers } from '../interfaces'
+import { IMembers, PeerConnectionState } from '../interfaces'
 import { getSigner, isNotFoundError } from '../utils/bee'
 import { remove0x, retryAwaitableAsync } from '../utils/common'
 import { MEMBERS_FEED_SUFFIX, PLACEHOLDER_STAMP } from '../utils/constants'
@@ -20,6 +20,7 @@ export class Members implements IMembers {
   private currentIndex: bigint = -1n
   private readonly members: Map<string, string> = new Map()
   private readonly indices: Map<string, bigint> = new Map()
+  private readonly connStates: Map<string, PeerConnectionState> = new Map()
 
   constructor(rawTopic: string, beeUrl: string, stamp: string) {
     const memberFeedId = Topic.fromString(rawTopic + MEMBERS_FEED_SUFFIX).toString()
@@ -53,6 +54,14 @@ export class Members implements IMembers {
 
   setIndex(address: string, index: bigint): void {
     this.indices.set(address, index)
+  }
+
+  setConnectionState(address: string, state: PeerConnectionState): void {
+    this.connStates.set(address, state)
+  }
+
+  allConnectionStates(): ReadonlyMap<string, PeerConnectionState> {
+    return new Map(this.connStates)
   }
 
   async read(): Promise<Map<string, string> | null> {
