@@ -4,7 +4,7 @@ import { DOC_EVENTS } from '../doc/events'
 import { ISwarmSignal, SignalRecord, SignalType } from '../interfaces'
 import { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/doc'
 import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
-import { uuidV4 } from '../utils/common'
+import { Origin, uuidV4 } from '../utils/common'
 import { FALLBACK_ICE_SERVER_URL } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
 import { Logger } from '../utils/logger'
@@ -16,11 +16,6 @@ const SIGNAL_POLL_INTERVAL_MS = 5_000 // 5 sec
 const OFFER_MAX_AGE_MS = 5 * 60 * 1_000 // 5 mins
 const PEER_RETRY_TIMEOUT_MS = 10_000 // 10 sec
 const CHANNEL_BINARY_TYPE = 'arraybuffer'
-
-enum Origin {
-  SwarmRtc = 'swarm-rtc',
-  Remote = 'remote',
-}
 
 class SwarmRtcTransport implements DocTransport {
   private errorHandler = ErrorHandler.getInstance()
@@ -259,6 +254,14 @@ class SwarmRtcTransport implements DocTransport {
       return
     }
 
+    if (candidateCount === 0 || pc.connectionState === 'failed') {
+      pc.close()
+      this.swarmRtcPeers.delete(peerAddress)
+      this.logger.debug(`${TAG} answerPeerOffer ${peerAddress.slice(0, 8)}… aborted — ICE failed before gathering`)
+
+      return
+    }
+
     const record: SignalRecord = {
       type: SignalType.ANSWER,
       fromAddress: this.deps.ownAddress,
@@ -444,7 +447,9 @@ class SwarmRtcTransport implements DocTransport {
     channel.addEventListener('close', () => {
       this.deps.doc.off('update', forwardUpdate)
       this.openChannels.delete(peerAddress)
+      const pc = this.swarmRtcPeers.get(peerAddress)
       this.swarmRtcPeers.delete(peerAddress)
+      pc?.close()
       this.logger.debug(`${TAG} channel CLOSED with ${peerAddress.slice(0, 8)}…`)
     })
   }
@@ -458,16 +463,21 @@ class SwarmRtcTransport implements DocTransport {
         return
       }
 
+      let timer: ReturnType<typeof setTimeout>
+
       const onStateChange = () => {
         if (pc.iceGatheringState === 'complete') {
           this.logger.debug(`${TAG} ICE gathering complete (event)`)
+          clearTimeout(timer)
+          pc.removeEventListener('icegatheringstatechange', onStateChange)
           resolve()
         }
       }
 
       pc.addEventListener('icegatheringstatechange', onStateChange)
-      setTimeout(() => {
+      timer = setTimeout(() => {
         this.logger.debug(`${TAG} ICE gathering timed out after ${timeoutMs}ms, state=${pc.iceGatheringState}`)
+        pc.removeEventListener('icegatheringstatechange', onStateChange)
         resolve()
       }, timeoutMs)
     })

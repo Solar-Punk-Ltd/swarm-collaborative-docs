@@ -159,10 +159,10 @@ export const SessionView: React.FC<SessionViewProps> = ({
   const memberList = useCallback((): ReactNode | null => {
     if (!members) return null
 
-    const block: ReactNode[] = []
+    const membersBlock: ReactNode[] = []
 
     for (const [addr, username] of members) {
-      block.push(
+      membersBlock.push(
         <span key={addr} className="session-view__member-chip">
           <span
             className="session-view__member-dot"
@@ -176,7 +176,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
       )
     }
 
-    return block
+    return membersBlock
   }, [members])
 
   return (

@@ -74,63 +74,76 @@ export class Members implements IMembers {
   async add(address: string, username: string): Promise<Map<string, string>> {
     const normalizedAddress = remove0x(address.toLowerCase())
     const reader = this.bee.makeFeedReader(this.topic, this.address)
-
-    // Always read latest — another peer may have added a member since our last write
-    let members: Map<string, string> = new Map()
-    try {
-      const result = await reader.downloadPayload()
-
-      if (result.payload.toUtf8().length) {
-        const parsed = JSON.parse(result.payload.toUtf8()) as Record<string, string>
-        members = new Map(Object.entries(parsed))
-        this.currentIndex = result.feedIndex.toBigInt()
-      }
-    } catch (err) {
-      if (!isNotFoundError(err)) this.errorHandler.handleError(err, `${TAG}.add read`)
-      // Not found → fresh list, start at index 0
-    }
-
-    if (members.has(normalizedAddress)) {
-      this.logger.debug(`${TAG} add: ${normalizedAddress.slice(0, 8)}… already in list`)
-
-      return members
-    }
-
-    members.set(normalizedAddress, username)
-    const nextIndex = this.currentIndex === -1n ? 0n : this.currentIndex + 1n
-
     const writer = this.bee.makeFeedWriter(this.topic, this.signer)
-    try {
-      await writer.uploadPayload(this.stamp, JSON.stringify(Object.fromEntries(members)), {
-        index: FeedIndex.fromBigInt(nextIndex),
-        deferred: false,
-      })
-      this.currentIndex = nextIndex
-    } catch (err) {
-      this.errorHandler.handleError(err, `${TAG}.add write`)
+    const MAX_CONFLICT_RETRIES = 3
 
-      return members
+    for (let attempt = 0; attempt < MAX_CONFLICT_RETRIES; attempt++) {
+      // Always read latest — another peer may have written since our last attempt
+      let members: Map<string, string> = new Map()
+      try {
+        const result = await reader.downloadPayload()
+
+        if (result.payload.toUtf8().length) {
+          const parsed = JSON.parse(result.payload.toUtf8()) as Record<string, string>
+          members = new Map(Object.entries(parsed))
+          this.currentIndex = result.feedIndex.toBigInt()
+        }
+      } catch (err) {
+        if (!isNotFoundError(err)) this.errorHandler.handleError(err, `${TAG}.add read`)
+        // Not found → fresh list, start at index 0
+      }
+
+      if (members.has(normalizedAddress)) {
+        this.logger.debug(`${TAG} add: ${normalizedAddress.slice(0, 8)}… already in list`)
+
+        return members
+      }
+
+      members.set(normalizedAddress, username)
+      const nextIndex = this.currentIndex === -1n ? 0n : this.currentIndex + 1n
+
+      try {
+        await writer.uploadPayload(this.stamp, JSON.stringify(Object.fromEntries(members)), {
+          index: FeedIndex.fromBigInt(nextIndex),
+          deferred: false,
+        })
+        this.currentIndex = nextIndex
+      } catch (err) {
+        this.errorHandler.handleError(err, `${TAG}.add write`)
+
+        return members
+      }
+
+      // Verify: read back to confirm own address survived a potential last-write-wins conflict
+      try {
+        const verified = await retryAwaitableAsync(
+          async () => {
+            const r = await reader.downloadPayload({ index: FeedIndex.fromBigInt(nextIndex) })
+            const parsed = JSON.parse(r.payload.toUtf8()) as Record<string, string>
+
+            return new Map(Object.entries(parsed))
+          },
+          3,
+          500,
+        )
+
+        if (verified.has(normalizedAddress)) {
+          this.logger.debug(`${TAG} add: verified — ${Array.from(verified.keys()).join(', ')}`)
+
+          return verified
+        }
+
+        // Own address was overwritten by a simultaneous write — retry with fresh read
+        this.logger.debug(`${TAG} add: conflict on attempt ${attempt + 1}, retrying`)
+      } catch {
+        this.logger.debug(`${TAG} add: verify timed out, using optimistic list`)
+
+        return members
+      }
     }
 
-    // Verify: read back to detect last-write-wins conflicts
-    try {
-      const verified = await retryAwaitableAsync(
-        async () => {
-          const r = await reader.downloadPayload({ index: FeedIndex.fromBigInt(nextIndex) })
-          const parsed = JSON.parse(r.payload.toUtf8()) as Record<string, string>
+    this.logger.debug(`${TAG} add: could not confirm own address after ${MAX_CONFLICT_RETRIES} attempts`)
 
-          return new Map(Object.entries(parsed))
-        },
-        3,
-        500,
-      )
-      this.logger.debug(`${TAG} add: verified — ${Array.from(verified.keys()).join(', ')}`)
-
-      return verified
-    } catch {
-      this.logger.debug(`${TAG} add: verify timed out, using optimistic list`)
-
-      return members
-    }
+    return (await this.read()) ?? new Map([[normalizedAddress, username]])
   }
 }

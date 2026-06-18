@@ -7,3 +7,6 @@ allowBuilds:
   unrs-resolver: true
 
 blockExoticSubdeps: false
+
+minimumReleaseAgeExclude:
+  - '@solarpunkltd/comment-system@1.9.5'

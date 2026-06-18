@@ -34,7 +34,7 @@
   },
   "dependencies": {
     "@ethersphere/bee-js": "github:Apiary-Suite/bee-js",
-    "@solarpunkltd/comment-system": "^1.9.3",
+    "@solarpunkltd/comment-system": "^1.9.5",
     "@waku/sdk": "^0.0.36",
     "lucide-react": "^1.8.0",
     "monaco-editor": "^0.55.1",

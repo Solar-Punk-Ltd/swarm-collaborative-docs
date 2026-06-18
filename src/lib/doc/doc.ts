@@ -18,7 +18,7 @@ import {
   NotificationPayload,
 } from '../interfaces'
 import { validateStamps } from '../utils/bee'
-import { decode, encode, indexStrToBigint, remove0x, retryAwaitableAsync, uuidV4 } from '../utils/common'
+import { decode, encode, indexStrToBigint, Origin, remove0x, retryAwaitableAsync, uuidV4 } from '../utils/common'
 import { API_VERSION, DOC_FEED_SUFFIX, PLACEHOLDER_STAMP } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
 import { EventEmitter } from '../utils/eventEmitter'
@@ -159,7 +159,7 @@ export class SwarmDoc implements ISwarmDoc {
   }
 
   private isRemoteOrigin(origin: unknown): boolean {
-    return origin === 'remote' || (this.transport.isRemoteOrigin(origin) ?? false)
+    return origin === Origin.Remote || (this.transport.isRemoteOrigin(origin) ?? false)
   }
 
   public stop(): void {
@@ -188,7 +188,7 @@ export class SwarmDoc implements ISwarmDoc {
   private applyYjsBytes(b64: string, label: string): void {
     try {
       const bytes = decode(b64)
-      Y.applyUpdate(this.doc, bytes, 'remote')
+      Y.applyUpdate(this.doc, bytes, Origin.Remote)
       this.emitter.emit(DOC_EVENTS.DOC_UPDATED, this.doc)
     } catch (err) {
       this.errorHandler.handleError(err, `${TAG}.applyYjsBytes [${label}]`)
@@ -314,7 +314,7 @@ export class SwarmDoc implements ISwarmDoc {
     const members = this.members.all()
     this.logger.debug(`${TAG} initMemberList: ${members.size} peer(s) to fetch`)
     const memberPromises: Promise<void>[] = []
-    members.forEach((addr: string, _username: string) => memberPromises.push(this.fetchLatestFromMember(addr)))
+    members.forEach((_username: string, addr: string) => memberPromises.push(this.fetchLatestFromMember(addr)))
     await Promise.allSettled(memberPromises)
   }
 

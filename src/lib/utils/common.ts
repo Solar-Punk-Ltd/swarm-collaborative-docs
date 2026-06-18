@@ -54,3 +54,8 @@ export function uuidV4(): string {
     return (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)
   })
 }
+
+export enum Origin {
+  SwarmRtc = 'swarm-rtc',
+  Remote = 'remote',
+}
