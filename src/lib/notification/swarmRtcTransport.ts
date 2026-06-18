@@ -14,7 +14,7 @@ import { SwarmSignal } from './swarmSignal'
 const TAG = 'SwarmRtcTransport'
 const SIGNAL_POLL_INTERVAL_MS = 5_000 // 5 sec
 const OFFER_MAX_AGE_MS = 5 * 60 * 1_000 // 5 mins
-const PEER_RETRY_TIMEOUT_MS = 10_000 // 10 sec
+const PEER_RETRY_TIMEOUT_MS = 5_000 // 5 sec
 const CHANNEL_BINARY_TYPE = 'arraybuffer'
 
 class SwarmRtcTransport implements DocTransport {
@@ -27,6 +27,8 @@ class SwarmRtcTransport implements DocTransport {
   private pendingOfferSessions = new Map<string, string>()
   // `"peerAddress:sessionId"` keys already answered — prevents double-answering the same offer
   private sentAnswerKeys = new Set<string>()
+  // addresses with a retry timer in flight — prevents duplicate retries from both failed and channel-close paths
+  private pendingRetries = new Set<string>()
   private signalPollTimer: ReturnType<typeof setInterval> | null = null
   private signalCheckInFlight = false
   private stopped = false
@@ -122,14 +124,7 @@ class SwarmRtcTransport implements DocTransport {
         pc.close()
         this.swarmRtcPeers.delete(peerAddress)
         this.pendingOfferSessions.delete(peerAddress)
-        this.logger.debug(`${TAG} [initiator→${peerAddress.slice(0, 8)}] ICE failed — retrying in 10s`)
-        setTimeout(() => {
-          if (!this.stopped && !this.swarmRtcPeers.has(peerAddress)) {
-            this.initiateConnectionTo(peerAddress).catch(err =>
-              this.errorHandler.handleError(err, `${TAG}.initiateConnectionTo retry`),
-            )
-          }
-        }, PEER_RETRY_TIMEOUT_MS)
+        this.scheduleReconnect(peerAddress, 'ICE failed')
       } else if (pc.connectionState === 'closed') {
         this.swarmRtcPeers.delete(peerAddress)
         this.pendingOfferSessions.delete(peerAddress)
@@ -457,7 +452,29 @@ class SwarmRtcTransport implements DocTransport {
       this.deps.members.setConnectionState(peerAddress, PeerConnectionState.Registered)
       this.deps.emitter.emit(DOC_EVENTS.PEER_STATE_UPDATED, this.deps.members.allConnectionStates())
       this.logger.debug(`${TAG} channel CLOSED with ${peerAddress.slice(0, 8)}…`)
+
+      if (this.isInitiatorFor(peerAddress)) {
+        this.scheduleReconnect(peerAddress, 'channel closed')
+      }
     })
+  }
+
+  private scheduleReconnect(peerAddress: string, reason: string): void {
+    if (this.pendingRetries.has(peerAddress)) return
+
+    this.pendingRetries.add(peerAddress)
+    this.logger.debug(
+      `${TAG} [initiator→${peerAddress.slice(0, 8)}] ${reason} — retrying in ${PEER_RETRY_TIMEOUT_MS}ms`,
+    )
+    setTimeout(() => {
+      this.pendingRetries.delete(peerAddress)
+
+      if (!this.stopped && !this.swarmRtcPeers.has(peerAddress)) {
+        this.initiateConnectionTo(peerAddress).catch(err =>
+          this.errorHandler.handleError(err, `${TAG}.scheduleReconnect`),
+        )
+      }
+    }, PEER_RETRY_TIMEOUT_MS)
   }
 
   private waitForIceGatheringComplete(pc: RTCPeerConnection, timeoutMs = 5000): Promise<void> {
