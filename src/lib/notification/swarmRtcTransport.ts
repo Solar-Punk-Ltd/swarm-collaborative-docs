@@ -254,6 +254,7 @@ class SwarmRtcTransport implements DocTransport {
     if (candidateCount === 0 || pc.connectionState === 'failed') {
       pc.close()
       this.swarmRtcPeers.delete(peerAddress)
+      this.sentAnswerKeys.delete(key)
       this.logger.debug(`${TAG} answerPeerOffer ${peerAddress.slice(0, 8)}… aborted — ICE failed before gathering`)
 
       return
