@@ -1,14 +1,51 @@
-import { Bee, PubsubMode, PubsubSubscription } from '@ethersphere/bee-js'
+/*
+ * NOT SHIPPED. Kept as a reference implementation only: this file is excluded from the
+ * library entry point and the published bundle. It needs GSOC pubsub, which no released
+ * Bee or `@ethersphere/bee-js` provides, so it cannot run against a public node today.
+ */
 
-import { DOC_EVENTS } from '../doc/events'
-import { PeerConnectionState } from '../interfaces'
-import type { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/doc'
-import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
-import { ErrorHandler } from '../utils/error'
-import { Logger } from '../utils/logger'
+import { Bee } from '@ethersphere/bee-js'
+
+import { DOC_EVENTS } from '../lib/doc/events'
+import { PeerConnectionState } from '../lib/interfaces'
+import type { DocTransport, DocTransportDeps, DocTransportFactory } from '../lib/interfaces/doc'
+import type { NotificationHandler, NotificationPayload } from '../lib/interfaces/notification'
+import { ErrorHandler } from '../lib/utils/error'
+import { Logger } from '../lib/utils/logger'
 
 const TAG = 'SwarmNotifTransport'
 const WS_RECONNECT_TIMEOUT_MS = 10_000
+const GSOC_EPHEMERAL = 'gsoc-ephemeral'
+
+/*
+ * GSOC pubsub is not part of any released Bee or published bee-js yet, so its surface is declared
+ * here structurally rather than imported. `connect()` feature-detects it and reports a clear error
+ * when the installed bee-js has no pubsub, instead of failing to build.
+ */
+interface PubsubSubscription {
+  send(data: string): Promise<unknown>
+  cancel(): void
+}
+
+interface PubsubHandlers {
+  onOpen: (sub: PubsubSubscription) => void
+  onMessage: (message: { toUint8Array(): Uint8Array }, sub: PubsubSubscription) => void
+  onError: (err: unknown, sub: PubsubSubscription) => void
+  onClose: (sub: PubsubSubscription) => void
+}
+
+type PubsubCapableBee = Bee & {
+  pubsubConnect(
+    mode: string,
+    handlers: PubsubHandlers,
+    brokerPeer: string,
+    options: { topic: string },
+  ): PubsubSubscription
+}
+
+function withPubsub(bee: Bee): PubsubCapableBee | null {
+  return typeof (bee as Partial<PubsubCapableBee>).pubsubConnect === 'function' ? (bee as PubsubCapableBee) : null
+}
 
 class SwarmPubSubDocTransport implements DocTransport {
   private errorHandler = ErrorHandler.getInstance()
@@ -69,19 +106,36 @@ class SwarmPubSubDocTransport implements DocTransport {
 
     this.isConnecting = true
 
-    const bee = new Bee(this.deps.beeApiUrl)
+    const bee = withPubsub(new Bee(this.deps.beeApiUrl))
+
+    if (!bee) {
+      this.isConnecting = false
+      const err = new Error(
+        'createSwarmPubSubTransport requires a bee-js build with GSOC pubsub support; use createSwarmRtcTransport instead',
+      )
+      this.errorHandler.handleError(err, `${TAG}.connect`)
+      this.deps.emitter.emit(DOC_EVENTS.DOC_ERROR, err)
+
+      return
+    }
 
     const subscription = bee.pubsubConnect(
-      PubsubMode.GSOC_EPHEMERAL,
+      GSOC_EPHEMERAL,
       {
         onOpen: _sub => {
           this.isConnecting = false
           this.isConnected = true
-          this.deps.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
-          for (const addr of this.deps.members.all().keys()) {
+          this.deps.emitter.emit(DOC_EVENTS.TRANSPORT_READY, true)
+
+          const peers = Array.from(this.deps.members.all().keys()).filter(addr => addr !== this.deps.ownAddress)
+          for (const addr of peers) {
             this.deps.members.setConnectionState(addr, PeerConnectionState.Connected)
           }
           this.deps.emitter.emit(DOC_EVENTS.PEER_STATE_UPDATED, this.deps.members.allConnectionStates())
+
+          if (peers.length > 0) {
+            this.deps.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
+          }
           this.logger.log(`${TAG} connected, docFeedId=${this.deps.docFeedId}`)
 
           const toSend = this.pendingPublishes.splice(0)

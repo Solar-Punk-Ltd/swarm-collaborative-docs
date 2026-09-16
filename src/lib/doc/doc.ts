@@ -1,43 +1,44 @@
 import { FeedIndex, PrivateKey, Signature, Topic } from '@ethersphere/bee-js'
-import {
-  MessageData,
-  MessageType,
-  Options,
-  readSingleComment as readDoc,
-  writeCommentToIndex as writeDoc,
-} from '@solarpunkltd/comment-system'
 import * as Y from 'yjs'
 
 import {
   CursorPosition,
   DocSettings,
   DocTransport,
+  IDocFeed,
   IMembers,
   ISwarmDoc,
+  MemberEntry,
   NotificationHandler,
   NotificationPayload,
+  PeerConnectionState,
 } from '../interfaces'
-import { validateStamps } from '../utils/bee'
-import { decode, encode, indexStrToBigint, Origin, remove0x, retryAwaitableAsync, uuidV4 } from '../utils/common'
-import { API_VERSION, DOC_FEED_SUFFIX, PLACEHOLDER_STAMP } from '../utils/constants'
+import { deriveSessionSigner, validateStamps } from '../utils/bee'
+import { decode, encode, Origin, remove0x, uuidV4 } from '../utils/common'
+import { API_VERSION, DOC_FEED_SUFFIX } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
 import { EventEmitter } from '../utils/eventEmitter'
 import { Logger } from '../utils/logger'
 
+import { DocFeed } from './docFeed'
 import { DOC_EVENTS } from './events'
 import { Members } from './members'
 
 const TAG = 'SwarmDoc'
 const DEBOUNCE_MS = 500
 const DEFAULT_MEMBER_LIST_POLL_INTERVAL_MS = 5000
+const DISCONNECTED_MEMBER_POLL_INTERVAL_MS = 15000
 const MIN_TTL_WARN_DAYS = 2
 
 export class SwarmDoc implements ISwarmDoc {
   public readonly doc: Y.Doc
   private errorHandler = ErrorHandler.getInstance()
   private emitter: EventEmitter
+  private identitySigner: PrivateKey
+  private identityAddress: string
   private signer: PrivateKey
   private ownAddress: string
+  private sessionId: string
   private username: string
   private ownIndex: bigint = -1n
   private docFeedId: string
@@ -46,44 +47,53 @@ export class SwarmDoc implements ISwarmDoc {
   private beeApiUrl: string
   private stampId: string
   private members: IMembers
+  private docFeed: IDocFeed
 
   private pendingUpdates: Uint8Array[] = []
   private debounceTimer: ReturnType<typeof setTimeout> | null = null
-  private publishInFlight = false
+  private publishQueue: Promise<void> = Promise.resolve()
+  private nameHints: Map<string, string>
   private fetchProcessRunning = false
   private memberListPollTimer: ReturnType<typeof setInterval> | null = null
+  private disconnectedPollTimer: ReturnType<typeof setInterval> | null = null
   private localCursor: CursorPosition = null
   private cursorTimer: ReturnType<typeof setInterval> | null = null
+  private connectedPeers = new Set<string>()
   private readonly logger = Logger.getInstance()
 
   constructor(settings: DocSettings) {
     this.doc = new Y.Doc()
     this.emitter = new EventEmitter()
 
-    this.signer = new PrivateKey(remove0x(settings.user.privateKey))
+    this.sessionId = settings.user.sessionId ?? uuidV4()
+    this.identitySigner = new PrivateKey(remove0x(settings.user.privateKey))
+    this.identityAddress = this.identitySigner.publicKey().address().toString()
+    this.signer = deriveSessionSigner(settings.user.privateKey, this.sessionId)
     this.ownAddress = this.signer.publicKey().address().toString()
     this.username = settings.user.nickname
     this.beeApiUrl = settings.infra.beeUrl
-    this.stampId = settings.infra.stamp || PLACEHOLDER_STAMP
+    this.stampId = settings.infra.stamp
 
     this.docFeedId = settings.infra.topic + DOC_FEED_SUFFIX
     this.docTopic = Topic.fromString(this.docFeedId).toString()
 
     this.members = new Members(this.docFeedId, this.beeApiUrl, this.stampId)
+    this.docFeed = new DocFeed(this.beeApiUrl, this.stampId)
 
-    const configuredMembers = settings.infra.members
-      ? Array.from(settings.infra.members.entries()).map(([addr, username]) => [remove0x(addr.toLowerCase()), username])
-      : []
-    const members = configuredMembers.filter(([addr]) => addr !== this.ownAddress)
+    this.nameHints = new Map(
+      Array.from(settings.infra.members ?? [], ([addr, username]) => [remove0x(addr.toLowerCase()), username]),
+    )
 
     this.transport = settings.infra.transport({
       doc: this.doc,
       emitter: this.emitter,
       members: this.members,
       ownAddress: this.ownAddress,
+      ownIdentity: this.identityAddress,
+      sessionId: this.sessionId,
       nickname: settings.user.nickname,
-      onPeerDiscovered: (address: string, username: string) => {
-        this.registerMember(address, username)
+      onPeerDiscovered: (address: string, entry: MemberEntry) => {
+        this.registerMember(address, entry)
         this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
         this.fetchLatestFromMember(address)
       },
@@ -92,38 +102,28 @@ export class SwarmDoc implements ISwarmDoc {
       signer: this.signer,
       stampId: this.stampId,
     })
-
-    for (const [memberAddress, memberUsername] of members) {
-      this.registerMember(memberAddress, memberUsername)
-    }
   }
 
-  private ownFeedOptions(): Options {
-    return {
-      identifier: Topic.fromString(this.docFeedId + this.ownAddress).toString(),
-      address: this.ownAddress,
-      beeApiUrl: this.beeApiUrl,
-      stamp: this.stampId,
-      signer: this.signer,
-    }
+  private ownFeedTopic(): Topic {
+    return Topic.fromString(this.docFeedId + this.ownAddress)
   }
 
-  private memberFeedOptions(address: string): Options {
-    return {
-      identifier: Topic.fromString(this.docFeedId + address).toString(),
-      address,
-      beeApiUrl: this.beeApiUrl,
-      stamp: this.stampId,
-    }
+  private memberFeedTopic(address: string): Topic {
+    return Topic.fromString(this.docFeedId + address)
   }
 
-  private registerMember(address: string, username: string): void {
-    if (!this.members.register(address, username)) {
-      return
-    }
+  private registerMember(address: string, entry: MemberEntry): void {
+    const named = { ...entry, username: entry.username || this.nameHints.get(entry.identity) || entry.username }
+    const isNew = this.members.register(address, named)
 
+    // Dialled regardless of `live`: the flag is last-write-wins shared state, and a stale retire
+    // (a reload reuses the session id, so its retire can land after the new instance's add) would
+    // otherwise strand the peer for good. Transports ignore a peer that already has a connection.
     this.transport.connectToPeer(address)
-    this.logger.debug(`${TAG} registerMember: ${address.slice(0, 8)}…`)
+
+    if (isNew) {
+      this.logger.debug(`${TAG} registerMember: ${address.slice(0, 8)}… live=${named.live}`)
+    }
   }
 
   public start(): void {
@@ -135,27 +135,39 @@ export class SwarmDoc implements ISwarmDoc {
       }
 
       this.pendingUpdates.push(update)
+      this.emitter.emit(DOC_EVENTS.WRITE_PENDING, true)
 
       if (this.debounceTimer) {
         clearTimeout(this.debounceTimer)
       }
 
       this.debounceTimer = setTimeout(() => {
-        const captured = [...this.pendingUpdates]
-        this.pendingUpdates = []
         this.debounceTimer = null
-        this.publishSnapshot(captured)
+        this.drainPendingUpdates()
       }, DEBOUNCE_MS)
     })
 
+    this.watchPeerStates()
     this.init()
     this.startFetchProcess()
     this.startMemberListPoll()
+    this.startDisconnectedMemberPoll()
     this.startCursorBroadcast()
   }
 
   public updateCursor(cursor: CursorPosition): void {
     this.localCursor = cursor
+  }
+
+  public async flush(): Promise<void> {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer)
+      this.debounceTimer = null
+    }
+
+    this.drainPendingUpdates()
+
+    await this.publishQueue
   }
 
   private isRemoteOrigin(origin: unknown): boolean {
@@ -165,15 +177,24 @@ export class SwarmDoc implements ISwarmDoc {
   public stop(): void {
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
 
-    if (this.memberListPollTimer) {
-      clearInterval(this.memberListPollTimer)
-      this.memberListPollTimer = null
+    for (const timer of [this.memberListPollTimer, this.disconnectedPollTimer, this.cursorTimer]) {
+      if (timer) clearInterval(timer)
     }
+    this.memberListPollTimer = null
+    this.disconnectedPollTimer = null
+    this.cursorTimer = null
 
-    if (this.cursorTimer) {
-      clearInterval(this.cursorTimer)
-      this.cursorTimer = null
-    }
+    this.transport.publish({
+      type: 'leave',
+      v: API_VERSION,
+      topic: this.docTopic,
+      author: this.ownAddress,
+      identity: this.identityAddress,
+      username: this.username,
+    })
+    this.members.retire(this.ownAddress).catch(() => {
+      // best effort — the session is going away regardless
+    })
 
     this.transport.stop()
     this.emitter.cleanAll()
@@ -195,39 +216,29 @@ export class SwarmDoc implements ISwarmDoc {
     }
   }
 
-  private async publishSnapshot(capturedUpdates: Uint8Array[]): Promise<void> {
-    if (this.publishInFlight) {
-      this.pendingUpdates.push(...capturedUpdates)
-
+  private drainPendingUpdates(): void {
+    if (this.pendingUpdates.length === 0) {
       return
     }
 
-    const allUpdates = [...capturedUpdates, ...this.pendingUpdates]
+    const captured = [...this.pendingUpdates]
     this.pendingUpdates = []
-    this.publishInFlight = true
 
+    // Serialised so each write lands on a distinct, increasing feed index.
+    this.publishQueue = this.publishQueue.then(() => this.publishSnapshot(captured))
+  }
+
+  private async publishSnapshot(capturedUpdates: Uint8Array[]): Promise<void> {
     try {
       const snapshot = encode(Y.encodeStateAsUpdate(this.doc))
-      const delta = encode(Y.mergeUpdates(allUpdates))
+      const delta = encode(Y.mergeUpdates(capturedUpdates))
 
       const nextIndex = this.ownIndex === -1n ? 0n : this.ownIndex + 1n
       this.logger.debug(
         `${TAG} publishSnapshot → index: ${nextIndex}, snapshot: ${(snapshot.length * 0.75) | 0}B, delta: ${(delta.length * 0.75) | 0}B`,
       )
 
-      const messageObj: MessageData = {
-        id: uuidV4(),
-        username: this.username,
-        address: this.ownAddress,
-        topic: this.docTopic,
-        signature: '',
-        timestamp: Date.now(),
-        type: MessageType.TEXT,
-        message: snapshot,
-        index: FeedIndex.fromBigInt(nextIndex).toString(),
-      }
-
-      await writeDoc(messageObj, FeedIndex.fromBigInt(nextIndex), this.ownFeedOptions())
+      await this.docFeed.write(this.ownFeedTopic(), this.signer, FeedIndex.fromBigInt(nextIndex), snapshot)
       this.ownIndex = nextIndex
 
       const deltaBytes = decode(delta)
@@ -238,6 +249,7 @@ export class SwarmDoc implements ISwarmDoc {
         v: API_VERSION,
         topic: this.docTopic,
         author: this.ownAddress,
+        identity: this.identityAddress,
         username: this.username,
         feedIndex: Number(nextIndex),
         delta,
@@ -247,12 +259,8 @@ export class SwarmDoc implements ISwarmDoc {
       this.errorHandler.handleError(err, `${TAG}.publishSnapshot`)
       this.emitter.emit(DOC_EVENTS.DOC_ERROR, err)
     } finally {
-      this.publishInFlight = false
-
-      if (this.pendingUpdates.length > 0) {
-        const next = [...this.pendingUpdates]
-        this.pendingUpdates = []
-        this.publishSnapshot(next)
+      if (this.pendingUpdates.length === 0 && !this.debounceTimer) {
+        this.emitter.emit(DOC_EVENTS.WRITE_DONE, true)
       }
     }
   }
@@ -272,32 +280,26 @@ export class SwarmDoc implements ISwarmDoc {
     await Promise.allSettled([this.initOwnIndex(), this.initMemberList()])
     this.logger.debug(`${TAG} init: done — ownIndex: ${this.ownIndex}`)
 
-    if (this.members.all().size === 0) {
-      this.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
-    }
+    this.emitter.emit(DOC_EVENTS.DOC_READY, { memberCount: this.members.all().size })
   }
 
   private async initOwnIndex(): Promise<void> {
-    const comment = await retryAwaitableAsync(() => readDoc(undefined, this.ownFeedOptions()), 5, 500)
+    const entry = await this.docFeed.readLatestFrom(this.ownFeedTopic(), this.ownAddress, 0n)
 
-    if (!comment) {
+    if (!entry) {
       return
     }
 
-    const parsedIx = indexStrToBigint(comment.index)
-    this.logger.debug(`${TAG} initOwnIndex: latest index on Swarm = ${parsedIx ?? 'none'}`)
-
-    if (parsedIx !== undefined && !FeedIndex.fromBigInt(parsedIx).equals(FeedIndex.MINUS_ONE)) {
-      this.ownIndex = parsedIx
-      this.applyYjsBytes(comment.message, `own idx=${parsedIx}`)
-    }
+    this.logger.debug(`${TAG} initOwnIndex: latest index on Swarm = ${entry.index}`)
+    this.ownIndex = entry.index
+    this.applyYjsBytes(entry.snapshot, `own idx=${entry.index}`)
   }
 
   private async initMemberList(): Promise<void> {
-    const membersList = await this.members.add(this.ownAddress, this.username)
-    for (const [addr, username] of membersList) {
+    const membersList = await this.members.add(this.ownAddress, this.ownEntry())
+    for (const [addr, entry] of membersList) {
       if (addr !== this.ownAddress) {
-        this.registerMember(addr, username)
+        this.registerMember(addr, entry)
       }
     }
 
@@ -308,14 +310,25 @@ export class SwarmDoc implements ISwarmDoc {
       v: API_VERSION,
       topic: this.docTopic,
       author: this.ownAddress,
+      identity: this.identityAddress,
       username: this.username,
     })
 
     const members = this.members.all()
     this.logger.debug(`${TAG} initMemberList: ${members.size} peer(s) to fetch`)
     const memberPromises: Promise<void>[] = []
-    members.forEach((_username: string, addr: string) => memberPromises.push(this.fetchLatestFromMember(addr)))
+    members.forEach((_entry: MemberEntry, addr: string) => memberPromises.push(this.fetchLatestFromMember(addr)))
     await Promise.allSettled(memberPromises)
+  }
+
+  private ownEntry(): MemberEntry {
+    return {
+      username: this.username,
+      identity: this.identityAddress,
+      sessionId: this.sessionId,
+      lastSeen: Date.now(),
+      live: true,
+    }
   }
 
   private async fetchLatestFromMember(memberAddress: string, targetIndex?: bigint, delta?: string): Promise<void> {
@@ -347,97 +360,124 @@ export class SwarmDoc implements ISwarmDoc {
       return
     }
 
+    // A gap means we never saw the updates in between; Yjs would park this delta as pending,
+    // so take the peer's full snapshot instead.
+    if (targetIndex > lastKnown + 1n) {
+      this.logger.debug(
+        `${TAG} applyDelta: ${memberAddress.slice(0, 8)}… gap lastKnown=${lastKnown} target=${targetIndex}, fetching snapshot`,
+      )
+      this.fetchLatestFromMember(memberAddress, targetIndex)
+
+      return
+    }
+
     this.members.setIndex(memberAddress, targetIndex)
     this.applyYjsBytes(delta, `${memberAddress.slice(0, 8)} delta idx=${targetIndex}`)
   }
 
   private async fetchSnapshot(memberAddress: string, targetIndex?: bigint): Promise<void> {
     const lastKnown = this.members.lastIndex(memberAddress)
-    const options = this.memberFeedOptions(memberAddress)
-    let comment: MessageData | undefined
-    let targetIx: bigint
 
-    if (targetIndex !== undefined) {
-      if (targetIndex <= lastKnown) return
-
-      this.logger.debug(`${TAG} fetchSnapshot: ${memberAddress.slice(0, 8)}… waiting for idx=${targetIndex} on Swarm`)
-      comment = await retryAwaitableAsync(() => readDoc(FeedIndex.fromBigInt(targetIndex), options), 5, 500)
-
-      if (!comment) {
-        this.logger.warn(
-          `${TAG} fetchSnapshot: ${memberAddress.slice(0, 8)}… idx=${targetIndex} unavailable after retries`,
-        )
-
-        return
-      }
-
-      targetIx = targetIndex
-    } else {
-      comment = await retryAwaitableAsync(() => readDoc(undefined, options), 3, 500)
-      const parsedIx = indexStrToBigint(comment?.index)
-      this.logger.debug(
-        `${TAG} fetchSnapshot: ${memberAddress.slice(0, 8)}… latestOnSwarm=${parsedIx ?? 'none'} lastKnown=${lastKnown}`,
-      )
-
-      if (!comment || parsedIx === undefined || parsedIx <= lastKnown) return
-
-      targetIx = parsedIx
+    if (targetIndex !== undefined && targetIndex <= lastKnown) {
+      return
     }
 
+    const topic = this.memberFeedTopic(memberAddress)
+    const entry =
+      targetIndex === undefined
+        ? await this.docFeed.readLatestFrom(topic, memberAddress, lastKnown + 1n)
+        : await this.docFeed.read(topic, memberAddress, FeedIndex.fromBigInt(targetIndex))
+
+    if (!entry) {
+      this.logger.debug(`${TAG} fetchSnapshot: ${memberAddress.slice(0, 8)}… nothing readable`)
+
+      return
+    }
+
+    const targetIx = targetIndex ?? entry.index
+
+    if (targetIx <= lastKnown) return
+
     this.members.setIndex(memberAddress, targetIx)
-    this.applyYjsBytes(comment.message, `${memberAddress.slice(0, 8)} snapshot idx=${targetIx}`)
+    this.applyYjsBytes(entry.snapshot, `${memberAddress.slice(0, 8)} snapshot idx=${targetIx}`)
   }
 
   public async refreshMemberList(): Promise<void> {
     try {
-      const members = await this.members.read()
-
-      if (!members || members.size === 0 || Object.keys(members).length === 0) {
-        this.logger.debug(`${TAG} refreshMemberList: empty member list`)
-
-        return
-      }
-
-      let changed = false
-      for (const [addr, username] of members) {
-        if (addr !== this.ownAddress && !this.members.has(addr)) {
-          this.registerMember(addr, username)
-          this.fetchLatestFromMember(addr)
-          changed = true
-        }
-      }
-
-      if (changed) {
-        this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
-      }
+      await this.mergeRemoteMemberList()
     } catch (err) {
       this.errorHandler.handleError(err, `${TAG}.refreshMemberList`)
     }
   }
 
-  private startMemberListPoll(): void {
-    this.memberListPollTimer = setInterval(async () => {
-      try {
-        const members = await this.members.read()
+  private async mergeRemoteMemberList(): Promise<void> {
+    const members = await this.members.read()
 
-        if (!members) {
-          return
+    if (!members || members.size === 0) {
+      return
+    }
+
+    let changed = false
+    for (const [addr, entry] of members) {
+      if (addr !== this.ownAddress) {
+        const known = this.members.get(addr)
+
+        if (!known) {
+          this.registerMember(addr, entry)
+          this.fetchLatestFromMember(addr)
+          changed = true
+        } else if (known.live !== entry.live) {
+          this.registerMember(addr, entry)
+          changed = true
         }
-
-        let changed = false
-        for (const [addr, username] of members) {
-          if (addr !== this.ownAddress && !this.members.has(addr)) {
-            this.registerMember(addr, username)
-            this.fetchLatestFromMember(addr)
-            changed = true
-          }
-        }
-
-        if (changed) this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
-      } catch {
-        // no-op
       }
+    }
+
+    if (changed) {
+      this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
+    }
+  }
+
+  private startMemberListPoll(): void {
+    this.memberListPollTimer = setInterval(() => {
+      this.mergeRemoteMemberList().catch(() => {
+        // transient read failures are expected; the next tick retries
+      })
     }, DEFAULT_MEMBER_LIST_POLL_INTERVAL_MS)
+  }
+
+  /**
+   * A peer's snapshot feed is otherwise read once, when it is first seen. Until a data channel
+   * is up — which can take tens of seconds over Swarm signalling, or never — anything the peer
+   * writes after that would be missed entirely.
+   */
+  private startDisconnectedMemberPoll(): void {
+    this.disconnectedPollTimer = setInterval(() => {
+      const states = this.members.allConnectionStates()
+
+      for (const [addr] of this.members.all()) {
+        if (addr !== this.ownAddress && states.get(addr) !== PeerConnectionState.Connected) {
+          this.fetchLatestFromMember(addr)
+        }
+      }
+    }, DISCONNECTED_MEMBER_POLL_INTERVAL_MS)
+  }
+
+  // A channel opening means the peer was unreachable until now — close the gap from their feed
+  // before relying on the channel, since deltas alone cannot fill it.
+  private watchPeerStates(): void {
+    this.emitter.on(DOC_EVENTS.PEER_STATE_UPDATED, (states: ReadonlyMap<string, PeerConnectionState>) => {
+      for (const [addr, state] of states) {
+        if (state === PeerConnectionState.Connected) {
+          if (!this.connectedPeers.has(addr)) {
+            this.connectedPeers.add(addr)
+            this.fetchLatestFromMember(addr)
+          }
+        } else {
+          this.connectedPeers.delete(addr)
+        }
+      }
+    })
   }
 
   private startFetchProcess(): void {
@@ -454,9 +494,21 @@ export class SwarmDoc implements ISwarmDoc {
 
       if (payload.type === 'join') {
         this.logger.debug(`${TAG} notification: join from ${author.slice(0, 8)}…`)
-        this.registerMember(author, payload.username)
+        this.registerMember(author, this.entryFromPayload(payload))
         this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
         this.fetchLatestFromMember(author)
+
+        return
+      }
+
+      if (payload.type === 'leave') {
+        this.logger.debug(`${TAG} notification: leave from ${author.slice(0, 8)}…`)
+        const known = this.members.get(author)
+
+        if (known) {
+          this.members.register(author, { ...known, live: false })
+          this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
+        }
 
         return
       }
@@ -464,6 +516,7 @@ export class SwarmDoc implements ISwarmDoc {
       if (payload.type === 'cursor') {
         this.emitter.emit(DOC_EVENTS.AWARENESS_UPDATED, {
           address: author,
+          identity: remove0x(payload.identity.toLowerCase()),
           username: payload.username,
           cursor: payload.cursor,
         })
@@ -512,6 +565,16 @@ export class SwarmDoc implements ISwarmDoc {
     this.transport.subscribe(this.docTopic, handler)
   }
 
+  private entryFromPayload(payload: NotificationPayload): MemberEntry {
+    return {
+      username: payload.username,
+      identity: remove0x(payload.identity.toLowerCase()),
+      sessionId: '',
+      lastSeen: Date.now(),
+      live: true,
+    }
+  }
+
   private startCursorBroadcast(): void {
     this.cursorTimer = setInterval(() => {
       this.transport.publish({
@@ -519,6 +582,7 @@ export class SwarmDoc implements ISwarmDoc {
         v: API_VERSION,
         topic: this.docTopic,
         author: this.ownAddress,
+        identity: this.identityAddress,
         username: this.username,
         cursor: this.localCursor,
       })

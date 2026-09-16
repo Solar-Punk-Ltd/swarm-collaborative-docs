@@ -16,12 +16,12 @@ a core property of the Swarm network and shapes how this library approaches stor
 
 ### Data layers
 
-| Layer                  | Mechanism                                    | Purpose                                                            |
-| ---------------------- | -------------------------------------------- | ------------------------------------------------------------------ |
-| **Document snapshot**  | Per-user Swarm feed (`<topic>_doc<address>`) | Durable, offline-accessible full state                             |
-| **Delta notification** | Transport-dependent (see below)              | Fast sync for peers already online                                 |
-| **Member discovery**   | Shared Swarm feed (`<topic>_members`)        | One approach to a persistent peer list — alternatives are possible |
-| **WebRTC signaling**   | Per-user Swarm feed (`<topic>_signal`)       | SDP exchange without a dedicated signaling server                  |
+| Layer                  | Mechanism                                              | Purpose                                                            |
+| ---------------------- | ------------------------------------------------------ | ------------------------------------------------------------------ |
+| **Document snapshot**  | Per-session Swarm feed (`<topic>_doc<sessionAddress>`) | Durable, offline-accessible full state                             |
+| **Delta notification** | Transport-dependent (see below)                        | Fast sync for peers already online                                 |
+| **Member discovery**   | Shared Swarm feed (`<topic>_members`)                  | One approach to a persistent peer list — alternatives are possible |
+| **WebRTC signaling**   | Per-user Swarm feed (`<topic>_signal`)                 | SDP exchange without a dedicated signaling server                  |
 
 ### Document lifecycle
 
@@ -78,8 +78,10 @@ works well for small, known groups where all members write to a shared namespace
 extend it entirely — for example using ENS records, a smart contract registry, a curated invite list, or any other
 mechanism that can resolve a set of Ethereum addresses.
 
-To use a custom discovery layer, resolve your peer set externally and pass it to `SwarmDoc` via the `members` field in
-`DocSettings`. The library will skip its own consensus feed and use the provided map as the initial peer list:
+The `members` field in `DocSettings` takes a map of identity address to username. These are **display hints**, not a
+replacement for discovery: an identity address alone cannot address a peer's feeds, because those are keyed by session
+address (see [Sessions](#sessions)). The library resolves session addresses from the consensus feed and from `join`
+notifications, and uses a hint to label a peer whose entry carries no username.
 
 ```typescript
 const knownPeers = new Map([
@@ -91,7 +93,7 @@ const settings: DocSettings = {
   ...
   infra: {
     ...
-    members: knownPeers, // peer discovery handled externally
+    members: knownPeers, // names for identities you already know
   },
 }
 ```
@@ -178,8 +180,9 @@ window.self.MonacoEnvironment = {
 ### Remote cursor rendering
 
 `y-monaco`'s built-in awareness path is not used here because the library surfaces cursor state through its own
-`DOC_EVENTS.AWARENESS_UPDATED` event rather than exposing a `Y.Awareness` instance. Cursors are rendered manually using
-Monaco's decoration API:
+`DOC_EVENTS.AWARENESS_UPDATED` event rather than exposing a `Y.Awareness` instance. The same applies to CodeMirror:
+`yCollab(ytext, null)` from `y-codemirror.next` accepts a null awareness and works fine, with remote cursors drawn by
+the application from `AWARENESS_UPDATED`. Cursors are rendered manually using Monaco's decoration API:
 
 - `useSwarmDoc` returns `awareness: Map<string, AwarenessState>` — a map of peer address →
   `{ address, username, cursor: { anchor, head } | null }`.
@@ -200,6 +203,16 @@ yDoc.getText('scripts/deploy.ts')
 
 Pass the file path as the `filePathKey` prop to `MonacoEditor`. All open files share the same Swarm transport session —
 no extra connections are needed.
+
+Cursors carry the same key as `CursorPosition.scope`, so a peer's caret in `contracts/MyToken.sol` is not drawn at the
+same offsets in whatever file the receiver happens to have open. Report it with the local cursor and skip any remote
+state whose `scope` is set and does not match the editor's own key:
+
+```typescript
+onCursorChange({ anchor, head, scope: filePathKey })
+```
+
+Omit `scope` in a single-text document; a receiver treats an absent scope as "the default text".
 
 ### Alternative: `@monaco-editor/react`
 
@@ -230,8 +243,13 @@ loading approach is used.
 ### Installation
 
 ```bash
-npm install @solarpunkltd/swarm-collaborative-docs
+npm install @solarpunkltd/swarm-collaborative-docs yjs
 ```
+
+`yjs` is a peer dependency and is deliberately **not** bundled: an editor binding such as `y-monaco`,
+`y-codemirror.next` or `y-prosemirror` imports Yjs itself, and two Yjs instances in one page do not recognise each
+other's relative positions and types. Your application must provide the single copy both sides share. The same applies
+to `@ethersphere/bee-js`, which the library also keeps external.
 
 ### `SwarmDoc`
 
@@ -245,6 +263,7 @@ const settings: DocSettings = {
   user: {
     privateKey: '0xabc...', // secp256k1 private key, hex with or without 0x
     nickname: 'Alice',
+    sessionId: crypto.randomUUID(), // optional; one per tab — see below
   },
   infra: {
     beeUrl: 'http://localhost:1633',
@@ -259,11 +278,14 @@ const swarmDoc = new SwarmDoc(settings)
 swarmDoc.getEmitter().on(DOC_EVENTS.DOC_UPDATED, (doc: Y.Doc) => {
   /* re-render */
 })
-swarmDoc.getEmitter().on(DOC_EVENTS.MEMBERS_UPDATED, (members: Map<string, string>) => {
+swarmDoc.getEmitter().on(DOC_EVENTS.MEMBERS_UPDATED, (members: Map<string, MemberEntry>) => {
   /* update peer list */
 })
+swarmDoc.getEmitter().on(DOC_EVENTS.DOC_READY, () => {
+  /* enable editor — init finished, with or without peers */
+})
 swarmDoc.getEmitter().on(DOC_EVENTS.PEERS_CONNECTED, () => {
-  /* enable editor */
+  /* show "live" — at least one remote peer is connected */
 })
 swarmDoc.getEmitter().on(DOC_EVENTS.DOC_ERROR, (err: Error) => {
   /* show error */
@@ -277,20 +299,26 @@ swarmDoc.start()
 // bind an editor directly to the shared Y.Text
 const text = swarmDoc.doc.getText('content')
 
+// before the page unloads — snapshot writes are debounced and would otherwise be lost
+window.addEventListener('beforeunload', () => {
+  swarmDoc.flush()
+})
+
 // later
 swarmDoc.stop()
 ```
 
 #### Public members
 
-| Member                 | Type            | Description                                                        |
-| ---------------------- | --------------- | ------------------------------------------------------------------ |
-| `doc`                  | `Y.Doc`         | The shared Yjs document. Bind editors directly to this instance.   |
-| `start()`              | `void`          | Starts transport, fetches snapshots, begins member polling.        |
-| `stop()`               | `void`          | Tears down transport and all timers.                               |
-| `updateCursor(cursor)` | `void`          | Reports local cursor `{ anchor, head }` (or `null`) for broadcast. |
-| `getEmitter()`         | `EventEmitter`  | Returns the emitter for `DOC_EVENTS` subscriptions.                |
-| `refreshMemberList()`  | `Promise<void>` | Force-reads the consensus member list and registers new peers.     |
+| Member                 | Type            | Description                                                      |
+| ---------------------- | --------------- | ---------------------------------------------------------------- |
+| `doc`                  | `Y.Doc`         | The shared Yjs document. Bind editors directly to this instance. |
+| `start()`              | `void`          | Starts transport, fetches snapshots, begins member polling.      |
+| `stop()`               | `void`          | Tears down transport and all timers.                             |
+| `flush()`              | `Promise<void>` | Publishes queued edits now and resolves once they are on Swarm.  |
+| `updateCursor(cursor)` | `void`          | Reports local cursor `{ anchor, head, scope? }` (or `null`).     |
+| `getEmitter()`         | `EventEmitter`  | Returns the emitter for `DOC_EVENTS` subscriptions.              |
+| `refreshMemberList()`  | `Promise<void>` | Force-reads the consensus member list and registers new peers.   |
 
 ### `DocSettings`
 
@@ -299,16 +327,64 @@ interface DocSettings {
   user: {
     privateKey: string // secp256k1, hex with or without 0x
     nickname: string
+    sessionId?: string // one per tab; defaults to a random UUID
   }
   infra: {
     beeUrl: string // e.g. 'http://localhost:1633'
     stamp?: string // postage batch for all Swarm writes
     topic: string // shared document identifier
-    members?: Map<string, string> // pre-seeded peers: Map<address, username>
+    members?: Map<string, string> // display hints: Map<identity address, username>
     transport: DocTransportFactory
   }
 }
 ```
+
+#### Sessions
+
+The same identity can be open in more than one place at once — a second tab, a second device, a restored browser
+session. Each of those needs its own `sessionId`, because a session's Swarm feeds are addressed by a **session address**
+derived from `privateKey` and `sessionId` together. Two sessions sharing one id would write the same feeds with
+independent index counters and silently overwrite each other.
+
+Persist the id in `sessionStorage`: it is per tab, and it survives a reload, so a refresh rejoins the same session
+instead of leaving the previous one behind.
+
+```typescript
+function getOrCreateSessionId(): string {
+  const existing = sessionStorage.getItem('session_id')
+
+  if (existing) return existing
+
+  const sessionId = crypto.randomUUID()
+  sessionStorage.setItem('session_id', sessionId)
+
+  return sessionId
+}
+```
+
+Peers are therefore keyed by session address, not by identity. Each `MemberEntry` carries the `identity` address behind
+it, so a UI can group a person's sessions into one row:
+
+```typescript
+interface MemberEntry {
+  username: string
+  identity: string // identity address — shared by all of that user's sessions
+  sessionId: string
+  lastSeen: number
+  live: boolean // false once the session shut down; its snapshots are still read, it is never dialled
+}
+```
+
+#### Tunables
+
+Fixed in the current version: a 500 ms debounce before a local edit is written to Swarm (`flush()` bypasses it), a 5 s
+poll of the consensus member list, a 15 s poll of the snapshot feeds of members with no open channel, and — in
+`createSwarmRtcTransport` — a 2 s signal-feed poll, a 15 s connect timeout before a stalled `RTCPeerConnection` is
+renegotiated, and a 60 s staleness window on SDP records.
+
+All feed reads use explicit indices. Asking Bee for a feed's _latest_ update triggers a network search that is slow and
+whose misses are cached, so a record can stay invisible for tens of seconds after it was written — long enough to stall
+a WebRTC handshake past the point where DTLS still completes.
 
 A single postage stamp covers all Swarm writes made by this session: document snapshots, delta notifications, WebRTC
 signal records, and the consensus member list. The `stamp` field accepts any valid postage batch — how stamps are
@@ -318,15 +394,31 @@ and TTL.
 
 ### `DOC_EVENTS`
 
-| Event                          | Payload               | When                                      |
-| ------------------------------ | --------------------- | ----------------------------------------- |
-| `DOC_EVENTS.DOC_UPDATED`       | `Y.Doc`               | After every remote update is applied      |
-| `DOC_EVENTS.DOC_ERROR`         | `Error`               | Stamp validation failure or publish error |
-| `DOC_EVENTS.MEMBERS_UPDATED`   | `Map<string, string>` | Peer list changes (address → username)    |
-| `DOC_EVENTS.PEERS_CONNECTED`   | `true`                | Transport has at least one connected peer |
-| `DOC_EVENTS.AWARENESS_UPDATED` | `AwarenessState`      | Remote cursor position changed            |
+| Event                           | Payload                        | When                                                     |
+| ------------------------------- | ------------------------------ | -------------------------------------------------------- |
+| `DOC_EVENTS.DOC_UPDATED`        | `Y.Doc`                        | After every remote update is applied                     |
+| `DOC_EVENTS.DOC_ERROR`          | `Error`                        | Stamp validation failure or publish error                |
+| `DOC_EVENTS.DOC_READY`          | `{ memberCount: number }`      | Init finished — safe to edit, with or without peers      |
+| `DOC_EVENTS.TRANSPORT_READY`    | `true`                         | Transport's own channel is usable; says nothing of peers |
+| `DOC_EVENTS.MEMBERS_UPDATED`    | `Map<string, MemberEntry>`     | Peer list changes (session address → entry)              |
+| `DOC_EVENTS.PEERS_CONNECTED`    | `true`                         | At least one **remote** peer connected                   |
+| `DOC_EVENTS.PEER_STATE_UPDATED` | `Map<string, PeerConnection…>` | A peer's live connection state changed                   |
+| `DOC_EVENTS.AWARENESS_UPDATED`  | `AwarenessState`               | Remote cursor position changed                           |
+| `DOC_EVENTS.WRITE_PENDING`      | `true`                         | Local edits queued but not yet written to Swarm          |
+| `DOC_EVENTS.WRITE_DONE`         | `true`                         | Every queued local edit has been written                 |
 
-`AwarenessState` shape: `{ address: string, username: string, cursor: { anchor: number, head: number } | null }`.
+Gate an editor on `DOC_READY`, not on `PEERS_CONNECTED` — the latter never fires for a lone peer, which is the normal
+state of the first person to open a document.
+
+`PEER_STATE_UPDATED` is what to draw a per-peer "live" indicator from: `PeerConnectionState.Connected` means a data
+channel is open with that session, `Registered` means it is known from the consensus feed and reachable only through
+Swarm.
+
+`WRITE_PENDING` / `WRITE_DONE` bracket the debounce-and-write window. Pair them with `flush()` to warn before an unload
+rather than guessing at a timeout.
+
+`AwarenessState` shape:
+`{ address: string, identity: string, username: string, cursor: { anchor: number, head: number, scope?: string } | null }`.
 
 ### Interfaces
 
@@ -387,6 +479,19 @@ distinguished by message type: binary frames are Yjs updates, string frames are 
 ```typescript
 transport: createSwarmRtcTransport('stun:stun.l.google.com:19302' /* , iceServers? */)
 ```
+
+The second argument is a full `RTCIceServer[]` and replaces the default STUN pair when given — this is where a TURN
+relay goes, which is what gets peers connected through the symmetric NATs where STUN alone fails:
+
+```typescript
+transport: createSwarmRtcTransport('', [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'turn:turn.example.com:3478', username: '…', credential: '…' },
+])
+```
+
+When a data channel opens, the two sides exchange Yjs state vectors and reply with only the updates the other lacks,
+rather than each pushing its whole document. Losing one direction of that exchange is self-correcting.
 
 **Delivery**: WebRTC DataChannel (peer-to-peer). Requires a Bee node for signaling feed reads/writes.
 
@@ -451,8 +556,9 @@ transport: createWakuTransport(['/ip4/...']) // explicit bootstrap peers
 **SwarmRtc** is the default and recommended transport. It requires only a standard released Bee node and no external
 infrastructure beyond a STUN server.
 
-**SwarmPubSub** requires a Bee build from a development branch and is not yet part of any stable Bee release. The API
-may change before release.
+**SwarmPubSub** requires a Bee build from a development branch and a bee-js build that exposes GSOC pubsub; neither is
+part of a stable release yet. The transport detects this at connect time and emits `DOC_ERROR` when the installed bee-js
+has no pubsub support, so it fails loudly rather than hanging. The API may change before release.
 
 **Waku** is functional but delivery reliability depends on the public Waku sandbox network. Not recommended for
 production without dedicated bootstrap peers.
@@ -531,22 +637,23 @@ unmount.
 ```typescript
 import { useSwarmDoc } from './hooks/useSwarmDoc'
 
-const { doc, error, members, connected, awareness, updateCursor, refreshMemberList, dismissError } = useSwarmDoc({
-  user,
-  infra,
-})
+const { doc, error, members, ready, connected, awareness, updateCursor, flush, refreshMemberList, dismissError } =
+  useSwarmDoc({ user, infra })
 ```
 
-| Returned value         | Type                          | Description                                 |
-| ---------------------- | ----------------------------- | ------------------------------------------- |
-| `doc`                  | `Y.Doc \| null`               | The Yjs document (null before init)         |
-| `error`                | `Error \| null`               | Latest error, or null                       |
-| `members`              | `Map<string, string> \| null` | Connected peers: address → username         |
-| `connected`            | `boolean`                     | Whether the transport has at least one peer |
-| `awareness`            | `Map<string, AwarenessState>` | Live cursor state per peer address          |
-| `updateCursor(cursor)` | `(cursor) => void`            | Reports local cursor position for broadcast |
-| `refreshMemberList()`  | `() => void`                  | Triggers an immediate member list refresh   |
-| `dismissError()`       | `() => void`                  | Clears the current error                    |
+| Returned value         | Type                               | Description                                 |
+| ---------------------- | ---------------------------------- | ------------------------------------------- |
+| `doc`                  | `Y.Doc \| null`                    | The Yjs document (null before init)         |
+| `error`                | `Error \| null`                    | Latest error, or null                       |
+| `members`              | `Map<string, MemberEntry> \| null` | Known peers: session address → entry        |
+| `peerStates`           | `Map<string, PeerConnectionState>` | Live connection state per session address   |
+| `ready`                | `boolean`                          | Init finished — gate the editor on this     |
+| `connected`            | `boolean`                          | At least one remote peer has a live channel |
+| `awareness`            | `Map<string, AwarenessState>`      | Live cursor state per session address       |
+| `updateCursor(cursor)` | `(cursor) => void`                 | Reports local cursor position for broadcast |
+| `flush()`              | `() => Promise<void>`              | Writes queued edits to Swarm now            |
+| `refreshMemberList()`  | `() => void`                       | Triggers an immediate member list refresh   |
+| `dismissError()`       | `() => void`                       | Clears the current error                    |
 
 ---
 
@@ -633,10 +740,11 @@ configuration. Separating user identity from the Bee node means a user can point
 (their own, a public one, or an app-provisioned one) without that gateway having any relationship to their Ethereum
 identity. Feed updates would be signed client-side and submitted to whichever node the application is configured with.
 
-**Session keys** — for applications where users should not sign every feed update with their main wallet key, a
-delegated session key (an ephemeral key authorised by a one-time wallet signature) could be used for the duration of a
-session. The main wallet key establishes identity; the session key handles the high-frequency signing required for
-real-time edits.
+**Authenticated session keys** — feed writes are already signed by a per-session key derived from the identity key (see
+[Sessions](#sessions)), so the main key is not used for high-frequency signing. What is still missing is proof of the
+link: a session claims its `identity` in the member list and nothing verifies that claim. Having the identity key sign
+the session address once, and carrying that signature in the member entry, would make the grouping trustworthy — and is
+the natural shape for a wallet-issued delegation once identity moves to an EIP-1193 provider.
 
 ---
 

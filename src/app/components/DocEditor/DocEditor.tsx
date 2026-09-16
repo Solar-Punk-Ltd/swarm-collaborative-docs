@@ -76,21 +76,23 @@ export const DocEditor: React.FC<DocEditorProps> = ({
 
     for (const [address, state] of awareness) {
       if (state.cursor) {
-        const pos = Math.max(0, Math.min(state.cursor.anchor, el.value.length))
-        const { top, left } = getCaretXY(el, pos)
-        next.push({
-          address,
-          username: state.username,
-          color: colorForAddress(address),
-          top: top - scrollTop,
-          left,
-          lineHeight,
-        })
+        if (state.cursor.scope === undefined || state.cursor.scope === filePathKey) {
+          const pos = Math.max(0, Math.min(state.cursor.anchor, el.value.length))
+          const { top, left } = getCaretXY(el, pos)
+          next.push({
+            address,
+            username: state.username,
+            color: colorForAddress(address),
+            top: top - scrollTop,
+            left,
+            lineHeight,
+          })
+        }
       }
     }
 
     setBadges(next)
-  }, [awareness, content, scrollTop])
+  }, [awareness, content, scrollTop, filePathKey])
 
   const reportCursor = () => {
     const el = textareaRef.current
@@ -99,7 +101,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
       return
     }
 
-    onCursorChange({ anchor: el.selectionStart, head: el.selectionEnd })
+    onCursorChange({ anchor: el.selectionStart, head: el.selectionEnd, scope: filePathKey })
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {

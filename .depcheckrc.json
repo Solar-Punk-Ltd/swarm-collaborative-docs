@@ -8,6 +8,7 @@
     "rimraf",
     "sass",
     "@vitejs/plugin-react",
-    "lib"
+    "lib",
+    "@waku/sdk"
   ]
 }

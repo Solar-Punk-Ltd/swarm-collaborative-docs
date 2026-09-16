@@ -1,28 +1,30 @@
 export { SwarmDoc } from './doc/doc'
-export { Members } from './doc/members'
-
 export { DOC_EVENTS } from './doc/events'
 
 export { createSwarmRtcTransport } from './notification/swarmRtcTransport'
-export { createYWebrtcTransport } from './notification/yWebrtcTransport'
-
-export { createWakuTransport } from './notification/wakuTransport'
-export { createSwarmPubSubTransport } from './notification/swarmPubSubTransport'
+export type { SwarmRtcOptions } from './notification/swarmRtcTransport'
+export { createSignalingServerTransport } from './notification/signalingServerTransport'
+export type { SignalingServerOptions } from './notification/signalingServerTransport'
 
 export type { DocSettings } from './interfaces'
-export type { NotificationPayload, NotificationHandler, JoinPayload, DocPayload, CursorPayload } from './interfaces'
-export type { SignalRecord, SignalFeedPayload } from './interfaces'
+export type {
+  NotificationPayload,
+  NotificationHandler,
+  JoinPayload,
+  DocPayload,
+  CursorPayload,
+  LeavePayload,
+} from './interfaces'
 export type {
   DocTransport,
   DocTransportDeps,
   DocTransportFactory,
   ISwarmDoc,
   IMembers,
-  ISwarmSignal,
+  MemberEntry,
   CursorPosition,
 } from './interfaces'
 export { PeerConnectionState } from './interfaces'
 
-export { getSigner, validateStamps } from './utils/bee'
-export { indexStrToBigint, uuidV4 } from './utils/common'
-export { PLACEHOLDER_STAMP } from './utils/constants'
+export { validateStamps } from './utils/bee'
+export { uuidV4 } from './utils/common'

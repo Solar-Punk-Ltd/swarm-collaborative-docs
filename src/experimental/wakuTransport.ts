@@ -1,3 +1,9 @@
+/*
+ * NOT SHIPPED. Kept as a reference implementation only: this file is excluded from the
+ * library entry point and the published bundle, and `@waku/sdk` is not a dependency.
+ * Peer discovery works, but it has had no reliability work and is not supported.
+ */
+
 import type { IDecodedMessage, LightNode } from '@waku/sdk'
 import {
   createDecoder,
@@ -9,11 +15,11 @@ import {
   WakuEvent,
 } from '@waku/sdk'
 
-import { DOC_EVENTS } from '../doc/events'
-import type { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/doc'
-import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
-import { ErrorHandler } from '../utils/error'
-import { Logger } from '../utils/logger'
+import { DOC_EVENTS } from '../lib/doc/events'
+import type { DocTransport, DocTransportDeps, DocTransportFactory } from '../lib/interfaces/doc'
+import type { NotificationHandler, NotificationPayload } from '../lib/interfaces/notification'
+import { ErrorHandler } from '../lib/utils/error'
+import { Logger } from '../lib/utils/logger'
 
 const TAG = 'WakuTransport'
 
@@ -93,7 +99,7 @@ class WakuDocTransport implements DocTransport {
 
     this.node = node
     this.logger.log(`${TAG} node connected`)
-    this.deps.emitter.emit(DOC_EVENTS.PEERS_CONNECTED, true)
+    this.deps.emitter.emit(DOC_EVENTS.TRANSPORT_READY, true)
 
     if (this.pendingSubscription) {
       const { topic, handler } = this.pendingSubscription

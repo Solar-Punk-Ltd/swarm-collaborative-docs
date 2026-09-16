@@ -1,25 +1,10 @@
 import { PrivateKey } from '@ethersphere/bee-js'
-import {
-  createSwarmPubSubTransport,
-  createSwarmRtcTransport,
-  createWakuTransport,
-  createYWebrtcTransport,
-  DocSettings,
-  PeerConnectionState,
-  PLACEHOLDER_STAMP,
-} from 'lib'
+import { createSignalingServerTransport, createSwarmRtcTransport, DocSettings, PeerConnectionState } from 'lib'
 import { Copy, FileText, LogOut, RefreshCw, Settings, Users } from 'lucide-react'
 import React, { ReactNode, useCallback, useMemo, useState } from 'react'
 
 import { useSwarmDoc } from '../../hooks/useSwarmDoc'
-import {
-  BEE_URL_KEY,
-  DEFAULT_BEE_API_URL,
-  DEFAULT_ICE_SERVER_URL,
-  DEFAULT_TOPIC,
-  STAMP_KEY,
-  TOPIC_KEY,
-} from '../../utils/constants'
+import { BEE_URL_KEY, DEFAULT_BEE_API_URL, DEFAULT_TOPIC, STAMP_KEY, TOPIC_KEY } from '../../utils/constants'
 import { colorForAddress } from '../../utils/peers'
 import { DocType, Session, Transport, TRANSPORT_LABELS } from '../../utils/types'
 import { DocEditor } from '../DocEditor/DocEditor'
@@ -29,6 +14,7 @@ import './SessionView.scss'
 
 interface SessionViewProps {
   session: Session
+  sessionId: string
   beeUrl: string
   stamp: string
   topic: string
@@ -41,6 +27,7 @@ interface SessionViewProps {
 
 export const SessionView: React.FC<SessionViewProps> = ({
   session,
+  sessionId,
   beeUrl,
   stamp,
   topic,
@@ -72,38 +59,17 @@ export const SessionView: React.FC<SessionViewProps> = ({
 
   const docConfig: DocSettings = useMemo(() => {
     const getTransport = () => {
-      if (session.transport === Transport.WAKU) {
-        let wakuAddress: string[] | undefined = undefined
+      const iceServers: RTCIceServer[] = [{ urls: session.stunUrl }]
 
-        if (session.wakuAddress) {
-          wakuAddress = [session.wakuAddress]
-        }
-
-        return createWakuTransport(wakuAddress)
+      if (session.transport === Transport.SIGNALING_SERVER) {
+        return createSignalingServerTransport({ signalingUrl: session.signalingUrl ?? '', iceServers })
       }
 
-      if (session.transport === Transport.SWARM_PUBSUB) {
-        return createSwarmPubSubTransport(session.brokerPeer ?? '')
-      }
-
-      if (session.signalingUrl) {
-        return createYWebrtcTransport(session.signalingUrl)
-      }
-
-      let stunUrl = session.stunUrl
-
-      if (!stunUrl) {
-        stunUrl = DEFAULT_ICE_SERVER_URL
-        console.warn(
-          `No Transport option was provided, using defualt SwarmRtcTransport with STUN server url: ${stunUrl}`,
-        )
-      }
-
-      return createSwarmRtcTransport(stunUrl)
+      return createSwarmRtcTransport({ iceServers })
     }
 
     return {
-      user: { nickname: session.username, privateKey: signer.toHex() },
+      user: { nickname: session.username, privateKey: signer.toHex(), sessionId },
       infra: {
         beeUrl,
         stamp,
@@ -112,19 +78,18 @@ export const SessionView: React.FC<SessionViewProps> = ({
       },
     }
   }, [
+    sessionId,
     session.username,
-    session.brokerPeer,
     session.transport,
     session.signalingUrl,
     session.stunUrl,
-    session.wakuAddress,
     signer,
     topic,
     beeUrl,
     stamp,
   ])
 
-  const { doc, error, members, peerStates, connected, awareness, updateCursor, refreshMemberList, dismissError } =
+  const { doc, error, members, peerStates, ready, awareness, updateCursor, refreshMemberList, dismissError } =
     useSwarmDoc(docConfig)
 
   const transportLabel = TRANSPORT_LABELS[session.transport]
@@ -144,38 +109,57 @@ export const SessionView: React.FC<SessionViewProps> = ({
           (docType === DocType.Code ? (
             <MonacoEditor yDoc={doc} awareness={awareness} onCursorChange={updateCursor} />
           ) : (
-            <DocEditor yDoc={doc} disabled={!connected} awareness={awareness} onCursorChange={updateCursor} />
+            <DocEditor yDoc={doc} disabled={!ready} awareness={awareness} onCursorChange={updateCursor} />
           ))}
       </div>
     )
   }
 
+  // One chip per person, one dot per live session — the same identity may be open in several tabs.
   const memberList = useCallback((): ReactNode | null => {
     if (!members) return null
 
-    const membersBlock: ReactNode[] = []
+    const byIdentity = new Map<string, { username: string; sessions: string[] }>()
 
-    for (const [addr, username] of members) {
-      const state = peerStates.get(addr) ?? PeerConnectionState.Registered
-      const connected = state === PeerConnectionState.Connected
-      const chipClass = `session-view__member-chip${connected ? ' session-view__member-chip--connected' : ''}`
-      const dotClass = `session-view__member-dot${connected ? ' session-view__member-dot--connected' : ''}`
+    for (const [addr, entry] of members) {
+      if (entry.live) {
+        const group = byIdentity.get(entry.identity) ?? { username: entry.username, sessions: [] }
 
-      membersBlock.push(
-        <span key={addr} className={chipClass} title={state}>
-          <span
-            className={dotClass}
-            aria-hidden="true"
-            style={{ background: colorForAddress(addr), boxShadow: `0 0 0 2px ${colorForAddress(addr)}33` }}
-          />
-          <code className="session-view__member-code" title={addr}>
-            {username.length ? username : addr.slice(0, 8) + '…'}
-          </code>
-        </span>,
-      )
+        group.sessions.push(addr)
+
+        if (!group.username.length) group.username = entry.username
+
+        byIdentity.set(entry.identity, group)
+      }
     }
 
-    return membersBlock
+    return Array.from(byIdentity, ([identity, group]) => {
+      const anyConnected = group.sessions.some(addr => peerStates.get(addr) === PeerConnectionState.Connected)
+      const chipClass = `session-view__member-chip${anyConnected ? ' session-view__member-chip--connected' : ''}`
+      const color = colorForAddress(identity)
+
+      return (
+        <span key={identity} className={chipClass} title={`${group.sessions.length} session(s)`}>
+          {group.sessions.map(addr => {
+            const state = peerStates.get(addr) ?? PeerConnectionState.Registered
+            const isConnected = state === PeerConnectionState.Connected
+
+            return (
+              <span
+                key={addr}
+                className={`session-view__member-dot${isConnected ? ' session-view__member-dot--connected' : ''}`}
+                aria-hidden="true"
+                title={`${addr} — ${state}`}
+                style={{ background: color, boxShadow: `0 0 0 2px ${color}33` }}
+              />
+            )
+          })}
+          <code className="session-view__member-code" title={identity}>
+            {group.username.length ? group.username : identity.slice(0, 8) + '…'}
+          </code>
+        </span>
+      )
+    })
   }, [members, peerStates])
 
   return (
@@ -255,9 +239,9 @@ export const SessionView: React.FC<SessionViewProps> = ({
                   label: 'Postage stamp',
                   value: stampDraft,
                   onChange: setStampDraft,
-                  placeholder: PLACEHOLDER_STAMP,
+                  placeholder: 'required — a usable postage batch ID',
                   mono: true,
-                  onReset: () => setStampDraft(PLACEHOLDER_STAMP),
+                  onReset: () => setStampDraft(''),
                 },
                 {
                   label: 'Topic',

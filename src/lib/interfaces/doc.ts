@@ -3,7 +3,7 @@ import * as Y from 'yjs'
 
 import { EventEmitter } from '../utils/eventEmitter'
 
-import { IMembers } from './members'
+import { IMembers, MemberEntry } from './members'
 import type { CursorPosition, NotificationHandler, NotificationPayload } from './notification'
 
 /**
@@ -26,6 +26,12 @@ export interface ISwarmDoc {
   stop(): void
 
   /**
+   * Publishes any queued local edits immediately and resolves once they are on Swarm.
+   * Call before unloading the page — edits are otherwise debounced and can be lost on close.
+   */
+  flush(): Promise<void>
+
+  /**
    * Updates the local cursor position and schedules a broadcast.
    * Call from the editor's selection-change handler.
    * @param cursor Character index offsets `{ anchor, head }`, or `null` to clear.
@@ -40,11 +46,9 @@ export interface ISwarmDoc {
 }
 
 /**
- * Transport interface consumed by `SwarmDoc`. Implementations:
- *   - `createSwarmPubSubTransport` — Swarm GSOC pubsub WebSocket
- *   - `createSwarmRtcTransport` — WebRTC with Swarm-stored SDP signaling
- *   - `createYWebrtcTransport` — WebRTC via y-webrtc signaling server
- *   - `createWakuTransport` — libp2p gossipsub via Waku light node
+ * Transport interface consumed by `SwarmDoc`. Shipped implementations:
+ *   - `createSwarmRtcTransport` — WebRTC with SDP signalling stored in Swarm feeds
+ *   - `createSignalingServerTransport` — WebRTC via a WebSocket signaling server you run
  */
 export interface DocTransport {
   /** Called once by `SwarmDoc.start()`. */
@@ -75,12 +79,16 @@ export interface DocTransportDeps {
   emitter: { emit(event: string, ...args: unknown[]): void }
   /** Accessor for the current peer set. */
   members: IMembers
-  /** Ethereum address of the local user (hex, no 0x prefix). */
+  /** Session address of the local user (hex, no 0x prefix). Peers and feeds are keyed by this. */
   ownAddress: string
+  /** Identity address of the local user (hex, no 0x prefix). Shared across that user's sessions. */
+  ownIdentity: string
+  /** Session identifier of the local user. */
+  sessionId: string
   /** Display name of the local user. */
   nickname: string
   /** Called when the transport discovers a peer not yet in the member set. */
-  onPeerDiscovered: (address: string, username: string) => void
+  onPeerDiscovered: (address: string, entry: MemberEntry) => void
   /** Topic namespace used to derive per-user Swarm feed identifiers. */
   docFeedId: string
   /** Bee node HTTP API URL. */

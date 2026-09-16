@@ -5,17 +5,31 @@ import { ISwarmSignal, PeerConnectionState, SignalRecord, SignalType } from '../
 import { DocTransport, DocTransportDeps, DocTransportFactory } from '../interfaces/doc'
 import type { NotificationHandler, NotificationPayload } from '../interfaces/notification'
 import { Origin, uuidV4 } from '../utils/common'
-import { FALLBACK_ICE_SERVER_URL } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
 import { Logger } from '../utils/logger'
 
 import { SwarmSignal } from './swarmSignal'
+import { assertIceServers } from './validate'
 
 const TAG = 'SwarmRtcTransport'
-const SIGNAL_POLL_INTERVAL_MS = 5_000 // 5 sec
-const OFFER_MAX_AGE_MS = 5 * 60 * 1_000 // 5 mins
+const SIGNAL_POLL_INTERVAL_MS = 2_000 // 2 sec — indexed feed reads are a direct chunk lookup
+const OFFER_MAX_AGE_MS = 60 * 1_000 // 1 min — an older SDP no longer completes DTLS reliably
 const PEER_RETRY_TIMEOUT_MS = 5_000 // 5 sec
+const CONNECT_TIMEOUT_MS = 15_000 // 15 sec from applying the SDP to a usable connection
+const MAX_CONSECUTIVE_RETRIES = 5
 const CHANNEL_BINARY_TYPE = 'arraybuffer'
+
+// Binary frames on the data channel carry a one-byte tag; string frames are JSON notifications.
+const FRAME_STATE_VECTOR = 0
+const FRAME_UPDATE = 1
+
+function frame(tag: number, body: Uint8Array): Uint8Array {
+  const out = new Uint8Array(body.length + 1)
+  out[0] = tag
+  out.set(body, 1)
+
+  return out
+}
 
 class SwarmRtcTransport implements DocTransport {
   private errorHandler = ErrorHandler.getInstance()
@@ -29,6 +43,9 @@ class SwarmRtcTransport implements DocTransport {
   private sentAnswerKeys = new Set<string>()
   // addresses with a retry timer in flight — prevents duplicate retries from both failed and channel-close paths
   private pendingRetries = new Set<string>()
+  // consecutive failed connection attempts per peer — a session that reloaded never comes back
+  private retryCounts = new Map<string, number>()
+  private connectWatchdogs = new Map<string, ReturnType<typeof setTimeout>>()
   private signalPollTimer: ReturnType<typeof setInterval> | null = null
   private signalCheckInFlight = false
   private stopped = false
@@ -36,8 +53,7 @@ class SwarmRtcTransport implements DocTransport {
   private openChannels = new Map<string, RTCDataChannel>()
 
   constructor(
-    private readonly stunUrl: string,
-    private readonly iceServers: RTCIceServer[] | undefined,
+    private readonly iceServers: RTCIceServer[],
     private readonly deps: DocTransportDeps,
   ) {
     this.swarmSignal = new SwarmSignal(this.deps.docFeedId, this.deps.beeApiUrl, this.deps.signer, this.deps.stampId)
@@ -46,6 +62,7 @@ class SwarmRtcTransport implements DocTransport {
   start(): void {
     this.swarmSignal.clearOwn()
     this.startSignalPoll()
+    this.deps.emitter.emit(DOC_EVENTS.TRANSPORT_READY, true)
   }
 
   stop(): void {
@@ -60,7 +77,15 @@ class SwarmRtcTransport implements DocTransport {
       pc.close()
     }
 
+    for (const timer of this.connectWatchdogs.values()) {
+      clearTimeout(timer)
+    }
+
     this.swarmRtcPeers.clear()
+    this.connectWatchdogs.clear()
+    this.pendingRetries.clear()
+    this.retryCounts.clear()
+    this.openChannels.clear()
   }
 
   isRemoteOrigin(origin: unknown): boolean {
@@ -111,9 +136,7 @@ class SwarmRtcTransport implements DocTransport {
     }
 
     const pc = new RTCPeerConnection({
-      iceServers: this.iceServers?.length
-        ? this.iceServers
-        : [{ urls: this.stunUrl }, { urls: FALLBACK_ICE_SERVER_URL }],
+      iceServers: this.iceServers,
     })
     this.swarmRtcPeers.set(peerAddress, pc)
 
@@ -198,9 +221,7 @@ class SwarmRtcTransport implements DocTransport {
     this.sentAnswerKeys.add(key)
 
     const pc = new RTCPeerConnection({
-      iceServers: this.iceServers?.length
-        ? this.iceServers
-        : [{ urls: this.stunUrl }, { urls: FALLBACK_ICE_SERVER_URL }],
+      iceServers: this.iceServers,
     })
     this.swarmRtcPeers.set(peerAddress, pc)
 
@@ -271,6 +292,51 @@ class SwarmRtcTransport implements DocTransport {
 
     await this.swarmSignal.writeRecord(record)
     this.logger.debug(`${TAG} answer written → ${peerAddress.slice(0, 8)}… sessionId=${offer.sessionId.slice(0, 8)}`)
+    this.armConnectWatchdog(peerAddress, pc, key)
+  }
+
+  /*
+   * ICE reaching `connected` does not mean the channel is usable: DTLS can stall and leave
+   * `connectionState` at `connecting` indefinitely, which never fires a `failed` event and so
+   * never triggers a retry. Tear the connection down so a fresh offer can be negotiated.
+   */
+  private armConnectWatchdog(peerAddress: string, pc: RTCPeerConnection, answerKey?: string): void {
+    this.clearConnectWatchdog(peerAddress)
+
+    const timer = setTimeout(() => {
+      this.connectWatchdogs.delete(peerAddress)
+
+      if (this.stopped || pc.connectionState === 'connected' || this.openChannels.has(peerAddress)) {
+        return
+      }
+
+      this.logger.warn(
+        `${TAG} ${peerAddress.slice(0, 8)}… stuck in connectionState=${pc.connectionState} after ${CONNECT_TIMEOUT_MS}ms — renegotiating`,
+      )
+
+      pc.close()
+      this.swarmRtcPeers.delete(peerAddress)
+      this.pendingOfferSessions.delete(peerAddress)
+
+      if (answerKey) {
+        this.sentAnswerKeys.delete(answerKey)
+      }
+
+      if (this.isInitiatorFor(peerAddress)) {
+        this.scheduleReconnect(peerAddress, 'connect timeout')
+      }
+    }, CONNECT_TIMEOUT_MS)
+
+    this.connectWatchdogs.set(peerAddress, timer)
+  }
+
+  private clearConnectWatchdog(peerAddress: string): void {
+    const timer = this.connectWatchdogs.get(peerAddress)
+
+    if (timer) {
+      clearTimeout(timer)
+      this.connectWatchdogs.delete(peerAddress)
+    }
   }
 
   private startSignalPoll(): void {
@@ -283,15 +349,16 @@ class SwarmRtcTransport implements DocTransport {
     if (this.signalCheckInFlight) return
 
     this.signalCheckInFlight = true
-    const peers = this.deps.members.all()
 
-    if (peers.size === 0) {
+    // Not filtered by `entry.live`: that flag is last-write-wins shared state and a stale retire
+    // would permanently strand a peer. The retry cap is what stops dialling dead sessions.
+    const peerAddrs = Array.from(this.deps.members.all().keys())
+
+    if (peerAddrs.length === 0) {
       this.signalCheckInFlight = false
 
       return
     }
-
-    const peerAddrs = Array.from(peers.keys())
 
     try {
       await Promise.allSettled(peerAddrs.map(addr => this.checkPeerSignals(addr)))
@@ -312,6 +379,12 @@ class SwarmRtcTransport implements DocTransport {
     }
 
     const payload = await this.swarmSignal.read(peerAddress)
+
+    // A fresh record is proof of life: let a peer that is still negotiating earn back its retries
+    // rather than being written off for good by the cap.
+    if (payload) {
+      this.retryCounts.delete(peerAddress)
+    }
 
     if (!payload) {
       this.logger.debug(`${TAG} no new signal from ${peerAddress.slice(0, 8)}…`)
@@ -384,20 +457,7 @@ class SwarmRtcTransport implements DocTransport {
       await pc.setRemoteDescription({ type: SignalType.ANSWER, sdp: record.sdp })
       this.pendingOfferSessions.delete(peerAddress)
       this.logger.debug(`${TAG} handshake complete with ${peerAddress.slice(0, 8)}…`)
-      this.logger.debug(
-        `${TAG} post-handshake state — connectionState=${pc.connectionState} iceConnectionState=${pc.iceConnectionState} signalingState=${pc.signalingState}`,
-      )
-
-      let polls = 0
-      const poller = setInterval(() => {
-        this.logger.debug(
-          `${TAG} [poll ${++polls}] connectionState=${pc.connectionState} iceConnectionState=${pc.iceConnectionState}`,
-        )
-
-        if (polls >= 10 || pc.connectionState === 'connected' || pc.connectionState === 'failed') {
-          clearInterval(poller)
-        }
-      }, 1000)
+      this.armConnectWatchdog(peerAddress, pc)
     } catch (err) {
       this.errorHandler.handleError(err, `${TAG}.setRemoteDescription`)
     }
@@ -410,17 +470,30 @@ class SwarmRtcTransport implements DocTransport {
     this.deps.emitter.emit(DOC_EVENTS.PEER_STATE_UPDATED, this.deps.members.allConnectionStates())
     channel.binaryType = CHANNEL_BINARY_TYPE
     this.openChannels.set(peerAddress, channel)
+    this.retryCounts.delete(peerAddress)
+    this.clearConnectWatchdog(peerAddress)
 
-    // send full Yjs state as binary — peer applies it directly
-    const initialState = Y.encodeStateAsUpdate(this.deps.doc)
-    channel.send(initialState as unknown as Uint8Array<ArrayBuffer>)
+    // Ask for what we lack rather than pushing the whole document: both sides send their state
+    // vector, so the exchange is smaller and self-healing even if one direction is lost.
+    channel.send(frame(FRAME_STATE_VECTOR, Y.encodeStateVector(this.deps.doc)) as Uint8Array<ArrayBuffer>)
 
     channel.addEventListener('message', (event: MessageEvent) => {
-      // binary = Yjs update, string = NotificationPayload JSON
+      // binary = tagged Yjs frame, string = NotificationPayload JSON
       if (event.data instanceof ArrayBuffer) {
         const data = new Uint8Array(event.data)
-        this.logger.debug(`${TAG} received ${data.length}B from ${peerAddress.slice(0, 8)}…`)
-        Y.applyUpdate(this.deps.doc, data, Origin.SwarmRtc)
+        const body = data.subarray(1)
+        this.logger.debug(`${TAG} received ${data.length}B tag=${data[0]} from ${peerAddress.slice(0, 8)}…`)
+
+        if (data[0] === FRAME_STATE_VECTOR) {
+          if (channel.readyState === 'open') {
+            const diff = Y.encodeStateAsUpdate(this.deps.doc, body)
+            channel.send(frame(FRAME_UPDATE, diff) as Uint8Array<ArrayBuffer>)
+          }
+
+          return
+        }
+
+        Y.applyUpdate(this.deps.doc, body, Origin.SwarmRtc)
         this.deps.emitter.emit(DOC_EVENTS.DOC_UPDATED, this.deps.doc)
       } else if (typeof event.data === 'string') {
         if (!this.handler) {
@@ -438,7 +511,7 @@ class SwarmRtcTransport implements DocTransport {
 
     const forwardUpdate = (update: Uint8Array, origin: unknown) => {
       if (origin !== Origin.SwarmRtc && origin !== Origin.Remote && channel.readyState === 'open') {
-        channel.send(update as unknown as Uint8Array<ArrayBuffer>)
+        channel.send(frame(FRAME_UPDATE, update) as Uint8Array<ArrayBuffer>)
       }
     }
 
@@ -462,6 +535,17 @@ class SwarmRtcTransport implements DocTransport {
 
   private scheduleReconnect(peerAddress: string, reason: string): void {
     if (this.pendingRetries.has(peerAddress)) return
+
+    const attempts = (this.retryCounts.get(peerAddress) ?? 0) + 1
+    this.retryCounts.set(peerAddress, attempts)
+
+    // A session that closed its tab is never reachable again; stop dialling it and rely on its
+    // snapshot feed, which still holds everything it wrote.
+    if (attempts > MAX_CONSECUTIVE_RETRIES) {
+      this.logger.debug(`${TAG} giving up on ${peerAddress.slice(0, 8)}… after ${attempts - 1} attempts (${reason})`)
+
+      return
+    }
 
     this.pendingRetries.add(peerAddress)
     this.logger.debug(
@@ -508,6 +592,18 @@ class SwarmRtcTransport implements DocTransport {
   }
 }
 
+/** Configuration for {@link createSwarmRtcTransport}. */
+export interface SwarmRtcOptions {
+  /**
+   * ICE servers used for every peer connection. Required — the library ships no default,
+   * so connectivity is always a deliberate choice of the integrator.
+   *
+   * A STUN server suffices when at least one peer is directly reachable; peers behind
+   * symmetric NAT need a TURN server with credentials.
+   */
+  iceServers: RTCIceServer[]
+}
+
 /**
  * Creates a `DocTransportFactory` using Swarm-signaled WebRTC for peer-to-peer sync.
  *
@@ -520,9 +616,11 @@ class SwarmRtcTransport implements DocTransport {
  *
  * `subscribe` and `publish` are no-ops — Yjs updates flow directly over WebRTC data channels.
  *
- * @param stunUrl Primary STUN server URL (e.g. `"stun:stun.l.google.com:19302"`).
- * @param iceServers Optional full ICE server list. Overrides the default STUN pair when provided.
+ * @param options Must supply `iceServers`; there is no default and no fallback.
+ * @throws If `iceServers` is missing, empty, or contains a non-ICE URL.
  */
-export function createSwarmRtcTransport(stunUrl: string, iceServers?: RTCIceServer[]): DocTransportFactory {
-  return (deps: DocTransportDeps) => new SwarmRtcTransport(stunUrl, iceServers, deps)
+export function createSwarmRtcTransport(options: SwarmRtcOptions): DocTransportFactory {
+  const iceServers = assertIceServers('createSwarmRtcTransport', options?.iceServers)
+
+  return (deps: DocTransportDeps) => new SwarmRtcTransport(iceServers, deps)
 }

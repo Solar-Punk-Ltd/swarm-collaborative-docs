@@ -1,9 +1,9 @@
 import { Bee, FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
 
-import { IMembers, PeerConnectionState } from '../interfaces'
+import { IMembers, MemberEntry, PeerConnectionState } from '../interfaces'
 import { getSigner, isNotFoundError } from '../utils/bee'
 import { remove0x, retryAwaitableAsync } from '../utils/common'
-import { MEMBERS_FEED_SUFFIX, PLACEHOLDER_STAMP } from '../utils/constants'
+import { MEMBERS_FEED_SUFFIX } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
 import { Logger } from '../utils/logger'
 
@@ -18,7 +18,7 @@ export class Members implements IMembers {
   private readonly errorHandler = ErrorHandler.getInstance()
   private readonly logger = Logger.getInstance()
   private currentIndex: bigint = -1n
-  private readonly members: Map<string, string> = new Map()
+  private readonly members: Map<string, MemberEntry> = new Map()
   private readonly indices: Map<string, bigint> = new Map()
   private readonly connStates: Map<string, PeerConnectionState> = new Map()
 
@@ -28,13 +28,20 @@ export class Members implements IMembers {
     this.address = this.signer.publicKey().address().toString()
     this.topic = Topic.fromString(memberFeedId)
     this.bee = new Bee(beeUrl)
-    this.stamp = stamp || PLACEHOLDER_STAMP
+    this.stamp = stamp
   }
 
-  register(address: string, username: string): boolean {
-    if (this.members.has(address)) return false
+  register(address: string, entry: MemberEntry): boolean {
+    const existing = this.members.get(address)
 
-    this.members.set(address, username)
+    if (existing) {
+      // A retired session that reappears is live again; keep the applied index either way.
+      this.members.set(address, { ...existing, ...entry })
+
+      return false
+    }
+
+    this.members.set(address, entry)
     this.indices.set(address, -1n)
 
     return true
@@ -44,7 +51,11 @@ export class Members implements IMembers {
     return this.members.has(address)
   }
 
-  all(): ReadonlyMap<string, string> {
+  get(address: string): MemberEntry | undefined {
+    return this.members.get(address)
+  }
+
+  all(): ReadonlyMap<string, MemberEntry> {
     return new Map(this.members)
   }
 
@@ -64,15 +75,13 @@ export class Members implements IMembers {
     return new Map(this.connStates)
   }
 
-  async read(): Promise<Map<string, string> | null> {
+  async read(): Promise<Map<string, MemberEntry> | null> {
     try {
-      const reader = this.bee.makeFeedReader(this.topic, this.address)
+      const reader = this.bee.feed.makeReader(this.topic, this.address)
       const result = await reader.downloadPayload()
       this.currentIndex = result.feedIndex.toBigInt()
 
-      const parsed = JSON.parse(result.payload.toUtf8()) as Record<string, string>
-
-      return new Map(Object.entries(parsed))
+      return Members.parse(result.payload.toUtf8())
     } catch (err) {
       if (!isNotFoundError(err)) this.errorHandler.handleError(err, `${TAG}.read`)
 
@@ -80,21 +89,51 @@ export class Members implements IMembers {
     }
   }
 
-  async add(address: string, username: string): Promise<Map<string, string>> {
+  async retire(address: string): Promise<void> {
     const normalizedAddress = remove0x(address.toLowerCase())
-    const reader = this.bee.makeFeedReader(this.topic, this.address)
-    const writer = this.bee.makeFeedWriter(this.topic, this.signer)
+    const existing = this.members.get(normalizedAddress)
+
+    if (!existing) return
+
+    const retired: MemberEntry = { ...existing, live: false, lastSeen: Date.now() }
+    this.members.set(normalizedAddress, retired)
+
+    try {
+      await this.add(normalizedAddress, retired)
+    } catch (err) {
+      this.logger.debug(`${TAG} retire: ${normalizedAddress.slice(0, 8)}… failed — ${(err as Error).message}`)
+    }
+  }
+
+  // Entries were plain usernames before sessions existed; upgrade them so older rooms still resolve.
+  private static parse(payload: string): Map<string, MemberEntry> {
+    if (!payload.length) return new Map()
+
+    const parsed = JSON.parse(payload) as Record<string, MemberEntry | string>
+    const entries = Object.entries(parsed).map(([address, value]): [string, MemberEntry] => [
+      address,
+      typeof value === 'string'
+        ? { username: value, identity: address, sessionId: '', lastSeen: 0, live: true }
+        : value,
+    ])
+
+    return new Map(entries)
+  }
+
+  async add(address: string, entry: MemberEntry): Promise<Map<string, MemberEntry>> {
+    const normalizedAddress = remove0x(address.toLowerCase())
+    const reader = this.bee.feed.makeReader(this.topic, this.address)
+    const writer = this.bee.feed.makeWriter(this.topic, this.signer)
     const MAX_CONFLICT_RETRIES = 3
 
     for (let attempt = 0; attempt < MAX_CONFLICT_RETRIES; attempt++) {
       // Always read latest — another peer may have written since our last attempt
-      let members: Map<string, string> = new Map()
+      let members: Map<string, MemberEntry> = new Map()
       try {
         const result = await reader.downloadPayload()
+        members = Members.parse(result.payload.toUtf8())
 
-        if (result.payload.toUtf8().length) {
-          const parsed = JSON.parse(result.payload.toUtf8()) as Record<string, string>
-          members = new Map(Object.entries(parsed))
+        if (members.size) {
           this.currentIndex = result.feedIndex.toBigInt()
         }
       } catch (err) {
@@ -102,13 +141,15 @@ export class Members implements IMembers {
         // Not found → fresh list, start at index 0
       }
 
-      if (members.has(normalizedAddress)) {
+      const known = members.get(normalizedAddress)
+
+      if (known && known.live === entry.live) {
         this.logger.debug(`${TAG} add: ${normalizedAddress.slice(0, 8)}… already in list`)
 
         return members
       }
 
-      members.set(normalizedAddress, username)
+      members.set(normalizedAddress, entry)
       const nextIndex = this.currentIndex === -1n ? 0n : this.currentIndex + 1n
 
       try {
@@ -128,9 +169,8 @@ export class Members implements IMembers {
         const verified = await retryAwaitableAsync(
           async () => {
             const r = await reader.downloadPayload({ index: FeedIndex.fromBigInt(nextIndex) })
-            const parsed = JSON.parse(r.payload.toUtf8()) as Record<string, string>
 
-            return new Map(Object.entries(parsed))
+            return Members.parse(r.payload.toUtf8())
           },
           3,
           500,
@@ -153,6 +193,6 @@ export class Members implements IMembers {
 
     this.logger.debug(`${TAG} add: could not confirm own address after ${MAX_CONFLICT_RETRIES} attempts`)
 
-    return (await this.read()) ?? new Map([[normalizedAddress, username]])
+    return (await this.read()) ?? new Map([[normalizedAddress, entry]])
   }
 }

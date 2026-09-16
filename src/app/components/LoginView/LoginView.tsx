@@ -1,10 +1,9 @@
-import { PLACEHOLDER_STAMP, uuidV4, validateStamps } from 'lib'
+import { uuidV4, validateStamps } from 'lib'
 import { AlertCircle, AlertTriangle, FileText, LogIn } from 'lucide-react'
 import React, { useCallback, useState } from 'react'
 
 import {
   BEE_URL_KEY,
-  BROKER_PEER_KEY,
   DEFAULT_BEE_API_URL,
   DEFAULT_ICE_SERVER_URL,
   DEFAULT_SIGNALING_SERVER_URL,
@@ -17,8 +16,8 @@ import {
   TOPIC_KEY,
   TRANSPORT_KEY,
 } from '../../utils/constants'
-import { loadBrokerPeer, loadDocType, loadSession, loadStunUrl, loadTransport } from '../../utils/localStorage'
-import { DocType, DOCTYPE_LABELS, SessionOpts, Transport, TRANSPORT_LABELS, WebrtcMode } from '../../utils/types'
+import { loadDocType, loadSession, loadSignalingUrl, loadStunUrl, loadTransport } from '../../utils/localStorage'
+import { DocType, DOCTYPE_LABELS, SessionOpts, Transport, TRANSPORT_LABELS } from '../../utils/types'
 import { buildInviteLink } from '../../utils/url'
 
 import './LoginView.scss'
@@ -36,7 +35,7 @@ interface LoginViewProps {
   onLogin: (opts: SessionOpts) => void
 }
 
-const Transports = [Transport.SWARM_PUBSUB, Transport.WAKU, Transport.WEBRTC] as const
+const Transports = [Transport.SWARM_RTC, Transport.SIGNALING_SERVER] as const
 const DocTypes = [DocType.Code, DocType.Document] as const
 
 export const LoginView: React.FC<LoginViewProps> = ({
@@ -52,11 +51,8 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [inputName, setInputName] = useState(username ?? '')
   const [transport, setTransport] = useState<Transport>(loadTransport())
   const [docType, setDocType] = useState<DocType>(loadDocType())
-  const [serverUrl, setServerUrl] = useState(loadStunUrl())
-  const [webrtcMode, setWebrtcMode] = useState<WebrtcMode>(
-    loadStunUrl() ? WebrtcMode.SWARM_SIGNAL_FEED : WebrtcMode.SIGNALING_SERVER,
-  )
-  const [brokerPeer, setBrokerPeer] = useState(loadBrokerPeer())
+  const [stunUrl, setStunUrl] = useState(loadStunUrl())
+  const [signalingUrl, setSignalingUrl] = useState(loadSignalingUrl())
   const [validating, setValidating] = useState(false)
   const [pageError, setPageError] = useState<string | null>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
@@ -105,22 +101,18 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
     if (!name) return
 
-    if (transport === Transport.WEBRTC) {
-      if (!serverUrl) {
-        setPageError('Either STUN or Signaling server URL must be set!')
-        setValidating(false)
+    if (!stunUrl.trim()) {
+      setPageError('A STUN or TURN server URL is required — both transports use WebRTC.')
+      setValidating(false)
 
-        return
-      }
+      return
     }
 
-    if (transport === Transport.SWARM_PUBSUB) {
-      if (!brokerPeer.trim()) {
-        setPageError('Broker peer multiaddress is required for Swarm Pubsub!')
-        setValidating(false)
+    if (transport === Transport.SIGNALING_SERVER && !signalingUrl.trim()) {
+      setPageError('A signaling server URL is required for the signaling server transport.')
+      setValidating(false)
 
-        return
-      }
+      return
     }
 
     setPageError(null)
@@ -137,21 +129,15 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
     setValidating(false)
 
-    let signalingUrl: string | undefined = undefined
-    let stunUrl: string | undefined = undefined
-
-    if (webrtcMode === WebrtcMode.SIGNALING_SERVER) {
-      signalingUrl = serverUrl
-      localStorage.setItem(STUN_URL_KEY, '')
-    } else {
-      stunUrl = serverUrl
-      localStorage.setItem(SIGNALING_URL_KEY, '')
-    }
-
-    const peer = brokerPeer.trim() || undefined
-
-    onLogin({ username: name, transport, topic, docType, signalingUrl, stunUrl, brokerPeer: peer })
-  }, [inputName, transport, topic, webrtcMode, docType, brokerPeer, beeUrl, stamp, onLogin, serverUrl])
+    onLogin({
+      username: name,
+      transport,
+      topic,
+      docType,
+      stunUrl: stunUrl.trim(),
+      signalingUrl: transport === Transport.SIGNALING_SERVER ? signalingUrl.trim() : undefined,
+    })
+  }, [inputName, transport, topic, docType, beeUrl, stamp, onLogin, stunUrl, signalingUrl])
 
   return (
     <div className="login-view">
@@ -236,42 +222,34 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 ))}
               </div>
 
-              {transport === Transport.WEBRTC && (
-                <div className="login-view__webrtc">
-                  <div className="login-view__tab-bar">
-                    {([WebrtcMode.SIGNALING_SERVER, WebrtcMode.SWARM_SIGNAL_FEED] as const).map(mode => (
-                      <button
-                        key={mode}
-                        onClick={() => {
-                          setWebrtcMode(mode)
-                          const itemKey = mode === WebrtcMode.SIGNALING_SERVER ? SIGNALING_URL_KEY : STUN_URL_KEY
-                          const placeHolderUrl =
-                            mode === WebrtcMode.SIGNALING_SERVER ? DEFAULT_SIGNALING_SERVER_URL : DEFAULT_ICE_SERVER_URL
-                          setServerUrl(placeHolderUrl)
-                          localStorage.setItem(itemKey, placeHolderUrl)
-                        }}
-                        className={`login-view__tab-btn${webrtcMode === mode ? ' login-view__tab-btn--active' : ''}`}
-                      >
-                        {mode === WebrtcMode.SIGNALING_SERVER ? 'Signaling Server URL' : 'Swarm Signaling STUN URL '}
-                      </button>
-                    ))}
-                  </div>
+              <div className="login-view__field">
+                <label className="login-view__field-label">STUN / TURN server</label>
+                <input
+                  value={stunUrl}
+                  onChange={e => setStunUrl(e.target.value)}
+                  onBlur={() => localStorage.setItem(STUN_URL_KEY, stunUrl)}
+                  placeholder={DEFAULT_ICE_SERVER_URL}
+                  className="login-view__url-input"
+                />
+              </div>
+
+              {transport === Transport.SIGNALING_SERVER && (
+                <div className="login-view__field">
+                  <label className="login-view__field-label">Signaling server</label>
                   <input
-                    value={serverUrl}
-                    onChange={e => setServerUrl(e.target.value)}
-                    onBlur={() =>
-                      localStorage.setItem(
-                        webrtcMode === WebrtcMode.SIGNALING_SERVER ? SIGNALING_URL_KEY : STUN_URL_KEY,
-                        serverUrl,
-                      )
-                    }
-                    placeholder={
-                      webrtcMode === WebrtcMode.SIGNALING_SERVER ? DEFAULT_SIGNALING_SERVER_URL : DEFAULT_ICE_SERVER_URL
-                    }
+                    value={signalingUrl}
+                    onChange={e => setSignalingUrl(e.target.value)}
+                    onBlur={() => localStorage.setItem(SIGNALING_URL_KEY, signalingUrl)}
+                    placeholder={DEFAULT_SIGNALING_SERVER_URL}
                     className="login-view__url-input"
                   />
+                  <span className="login-view__stamp-warning">
+                    <AlertTriangle size={12} />
+                    You must run this server yourself — y-webrtc provides no public one
+                  </span>
                 </div>
               )}
+
               <div className="login-view__field">
                 <label className="login-view__field-label">Bee API URL</label>
                 <input
@@ -295,29 +273,16 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   value={stamp}
                   onChange={e => onStampChange(e.target.value)}
                   onBlur={() => localStorage.setItem(STAMP_KEY, stamp)}
-                  placeholder={PLACEHOLDER_STAMP}
+                  placeholder="required — a usable postage batch ID"
                   className="login-view__field-input login-view__field-input--mono"
                 />
-                {(!stamp || stamp === PLACEHOLDER_STAMP) && (
+                {!stamp && (
                   <span className="login-view__stamp-warning">
                     <AlertTriangle size={12} />
-                    No stamp set — uploads will rely on a gateway
+                    Required — every participant writes their own feed
                   </span>
                 )}
               </div>
-
-              {transport === Transport.SWARM_PUBSUB && (
-                <div className="login-view__field">
-                  <label className="login-view__field-label">Broker Peer</label>
-                  <input
-                    value={brokerPeer}
-                    onChange={e => setBrokerPeer(e.target.value)}
-                    onBlur={() => localStorage.setItem(BROKER_PEER_KEY, brokerPeer)}
-                    placeholder="/ip4/1.2.3.4/tcp/1634/p2p/QmXxxx…"
-                    className="login-view__url-input"
-                  />
-                </div>
-              )}
             </div>
           )}
 

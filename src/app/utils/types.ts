@@ -1,9 +1,8 @@
 import { CursorPosition } from 'lib'
 
 export enum Transport {
-  WEBRTC = 'webrtc',
-  WAKU = 'waku',
-  SWARM_PUBSUB = 'swarm-pubsub',
+  SWARM_RTC = 'swarm-rtc',
+  SIGNALING_SERVER = 'signaling-server',
 }
 
 export enum DocType {
@@ -16,10 +15,8 @@ export interface SessionOpts {
   topic: string
   transport: Transport
   docType: DocType
+  stunUrl: string
   signalingUrl?: string
-  stunUrl?: string
-  wakuAddress?: string
-  brokerPeer?: string
 }
 
 export interface Session {
@@ -29,16 +26,13 @@ export interface Session {
   topic: string
   docType: DocType
   transport: Transport
+  stunUrl: string
   signalingUrl?: string
-  stunUrl?: string
-  wakuAddress?: string
-  brokerPeer?: string
 }
 
 export const TRANSPORT_LABELS: Record<Transport, string> = {
-  [Transport.WEBRTC]: 'WebRTC',
-  [Transport.WAKU]: 'Waku',
-  [Transport.SWARM_PUBSUB]: 'Swarm Pubsub',
+  [Transport.SWARM_RTC]: 'Swarm-signalled WebRTC',
+  [Transport.SIGNALING_SERVER]: 'Signaling server',
 }
 
 export const DOCTYPE_LABELS: Record<DocType, string> = {
@@ -46,13 +40,9 @@ export const DOCTYPE_LABELS: Record<DocType, string> = {
   [DocType.Document]: 'Document',
 }
 
-export enum WebrtcMode {
-  SIGNALING_SERVER = 'signaling-server',
-  SWARM_SIGNAL_FEED = 'swarm-singal-feed',
-}
-
 export interface AwarenessState {
   address: string
+  identity: string
   username: string
   cursor: CursorPosition
 }

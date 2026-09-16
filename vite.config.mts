@@ -15,31 +15,19 @@ export default defineConfig(({ mode }) => {
   const isLibBuild = process.env.BUILD_MODE === 'lib'
 
   let libOptions: LibraryOptions | undefined = undefined
-  const pluginOptions: PluginOption[] = [nodePolyfills({ exclude: ['vm'] })]
+  const pluginOptions: PluginOption[] = isLibBuild ? [] : [nodePolyfills({ exclude: ['vm'] })]
 
   if (isLibBuild) {
     libOptions = {
       entry: libEntry,
       name: APP_NAME[0].toLocaleLowerCase() + APP_NAME.slice(1),
       formats: ['es', 'cjs'],
-      fileName: format => `${APP_NAME}.${format === 'es' ? 'js' : 'cjs.js'}`,
+      fileName: format => `${APP_NAME}.${format === 'es' ? 'mjs' : 'cjs'}`,
     }
     pluginOptions.push(dts({ insertTypesEntry: true }))
   }
 
-  const rollupOptions = isLibBuild
-    ? {
-        external: ['@ethersphere/bee-js', 'react', 'react-dom', 'y-webrtc'],
-        output: {
-          globals: {
-            react: 'React',
-            'react-dom': 'ReactDOM',
-            '@ethersphere/bee-js': 'BeeJs',
-            'y-webrtc': 'YWebrtc',
-          },
-        },
-      }
-    : {}
+  const rollupOptions = isLibBuild ? { external: ['@ethersphere/bee-js', 'yjs', 'y-webrtc'] } : {}
 
   return {
     plugins: pluginOptions,
@@ -51,8 +39,8 @@ export default defineConfig(({ mode }) => {
     optimizeDeps: {
       include: ['monaco-editor'],
     },
-    sourcemap: !isProd,
     build: {
+      sourcemap: !isProd,
       lib: libOptions,
       rollupOptions,
     },

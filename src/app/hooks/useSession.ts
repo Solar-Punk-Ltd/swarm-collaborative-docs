@@ -1,12 +1,20 @@
-import { getSigner, uuidV4 } from 'lib'
+import { PrivateKey } from '@ethersphere/bee-js'
+import { uuidV4 } from 'lib'
 import { useState } from 'react'
 
-import { DOCTYPE_KEY, SESSION_KEY, TRANSPORT_KEY, USERNAME_KEY } from '../utils/constants'
+import { DOCTYPE_KEY, SESSION_ID_KEY, SESSION_KEY, TRANSPORT_KEY, USERNAME_KEY } from '../utils/constants'
 import { loadSession } from '../utils/localStorage'
 import { Session, SessionOpts } from '../utils/types'
 
+function randomPrivateKey(): PrivateKey {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+
+  return new PrivateKey(Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(''))
+}
+
 function createSession(opts: SessionOpts): Session {
-  const { username, transport, topic, signalingUrl, docType, stunUrl, wakuAddress, brokerPeer } = { ...opts }
+  const { username, transport, topic, signalingUrl, docType, stunUrl } = { ...opts }
 
   const existing = loadSession()
 
@@ -20,12 +28,10 @@ function createSession(opts: SessionOpts): Session {
       transport,
       signalingUrl,
       stunUrl,
-      wakuAddress,
-      brokerPeer,
     }
   }
 
-  const signer = getSigner(uuidV4())
+  const signer = randomPrivateKey()
 
   return {
     username,
@@ -36,13 +42,24 @@ function createSession(opts: SessionOpts): Session {
     docType,
     signalingUrl,
     stunUrl,
-    wakuAddress,
-    brokerPeer,
   }
+}
+
+// sessionStorage, not localStorage: every tab needs its own session id, and it must survive a reload.
+function getOrCreateSessionId(): string {
+  const existing = sessionStorage.getItem(SESSION_ID_KEY)
+
+  if (existing) return existing
+
+  const sessionId = uuidV4()
+  sessionStorage.setItem(SESSION_ID_KEY, sessionId)
+
+  return sessionId
 }
 
 export function useSession() {
   const [session, setSession] = useState<Session | null>(loadSession)
+  const [sessionId] = useState(getOrCreateSessionId)
 
   const login = (opts: SessionOpts) => {
     const s = createSession(opts)
@@ -57,5 +74,5 @@ export function useSession() {
     setSession(null)
   }
 
-  return { session, login, logout }
+  return { session, sessionId, login, logout }
 }

@@ -2,11 +2,22 @@ import { Bee, EthAddress, FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-
 
 import { ISwarmSignal, SignalFeedPayload, SignalRecord } from '../interfaces'
 import { isNotFoundError } from '../utils/bee'
-import { PLACEHOLDER_STAMP, SIGNAL_FEED_SUFFIX } from '../utils/constants'
+import { SIGNAL_FEED_SUFFIX } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
 import { Logger } from '../utils/logger'
 
 const TAG = 'SwarmSignal'
+const MAX_DRAIN_PER_READ = 20
+
+/*
+ * Structural, so it survives bee-js accessor churn. Only indexed reads are used: an unindexed
+ * download makes Bee search the network for the latest update and negative-cache the miss, which
+ * delayed offer/answer discovery by 18–34 s. Signal feeds are append-only from index 0, so the
+ * index is always known and every read is a direct chunk lookup.
+ */
+interface IndexedFeedReader {
+  downloadPayload(options: { index: FeedIndex }): Promise<{ payload: { toUtf8(): string } }>
+}
 
 export class SwarmSignal implements ISwarmSignal {
   private readonly bee: Bee
@@ -15,7 +26,8 @@ export class SwarmSignal implements ISwarmSignal {
   private readonly topic: Topic
   private readonly stamp: string
   private currentIndex: bigint = -1n
-  private readonly peerLastIndexes: Map<string, bigint> = new Map()
+  private ownIndexResolved = false
+  private readonly peerNextIndexes: Map<string, bigint> = new Map()
   private readonly errorHandler = ErrorHandler.getInstance()
   private readonly logger = Logger.getInstance()
   private writeQueue: Promise<void> = Promise.resolve()
@@ -26,24 +38,38 @@ export class SwarmSignal implements ISwarmSignal {
     this.ownSigner = ownSigner
     this.ownAddress = ownSigner.publicKey().address().toString()
     this.bee = new Bee(beeUrl)
-    this.stamp = stamp || PLACEHOLDER_STAMP
+    this.stamp = stamp
   }
 
   async read(peerAddress: string): Promise<SignalFeedPayload | null> {
-    const reader = this.bee.makeFeedReader(this.topic, new EthAddress(peerAddress))
-    const lastIndex = this.peerLastIndexes.get(peerAddress)
+    const reader = this.bee.feed.makeReader(this.topic, new EthAddress(peerAddress))
+    const label = `read(${peerAddress.slice(0, 8)}…)`
+    let next = this.peerNextIndexes.get(peerAddress) ?? 0n
+    let latest: SignalFeedPayload | null = null
 
+    // Each payload carries the peer's full record set, so the newest readable index wins.
+    for (let i = 0; i < MAX_DRAIN_PER_READ; i++) {
+      const payload = await this.readIndex(reader, next, label)
+
+      if (!payload) break
+
+      latest = payload
+      next += 1n
+    }
+
+    this.peerNextIndexes.set(peerAddress, next)
+
+    return latest
+  }
+
+  private async readIndex(reader: IndexedFeedReader, index: bigint, label: string): Promise<SignalFeedPayload | null> {
     try {
-      const result = await reader.downloadPayload(
-        lastIndex === undefined ? undefined : { index: FeedIndex.fromBigInt(lastIndex + 1n) },
-      )
-
-      this.peerLastIndexes.set(peerAddress, result.feedIndex.toBigInt())
+      const result = await reader.downloadPayload({ index: FeedIndex.fromBigInt(index) })
 
       return JSON.parse(result.payload.toUtf8()) as SignalFeedPayload
     } catch (err) {
       if (!isNotFoundError(err)) {
-        this.errorHandler.handleError(err, `${TAG}.read(${peerAddress.slice(0, 8)}…)`)
+        this.errorHandler.handleError(err, `${TAG}.${label}`)
       }
 
       return null
@@ -83,27 +109,38 @@ export class SwarmSignal implements ISwarmSignal {
   }
 
   private async readOwn(): Promise<SignalFeedPayload> {
-    try {
-      const reader = this.bee.makeFeedReader(this.topic, this.ownAddress)
-      // Use explicit index when known — avoids Bee node "latest" cache returning a stale value
-      const result = await reader.downloadPayload(
-        this.currentIndex >= 0n ? { index: FeedIndex.fromBigInt(this.currentIndex) } : undefined,
-      )
-      this.currentIndex = result.feedIndex.toBigInt()
+    const reader = this.bee.feed.makeReader(this.topic, this.ownAddress)
 
-      return JSON.parse(result.payload.toUtf8()) as SignalFeedPayload
-    } catch (err) {
-      if (!isNotFoundError(err)) {
-        this.errorHandler.handleError(err, `${TAG}.readOwn`)
+    // We are the only writer, so the tail is found once and then tracked in memory.
+    if (!this.ownIndexResolved) {
+      let latest: SignalFeedPayload = { records: [] }
+      let next = 0n
+
+      for (let i = 0; i < MAX_DRAIN_PER_READ; i++) {
+        const payload = await this.readIndex(reader, next, 'readOwn')
+
+        if (!payload) break
+
+        latest = payload
+        this.currentIndex = next
+        next += 1n
       }
 
+      this.ownIndexResolved = true
+
+      return latest
+    }
+
+    if (this.currentIndex < 0n) {
       return { records: [] }
     }
+
+    return (await this.readIndex(reader, this.currentIndex, 'readOwn')) ?? { records: [] }
   }
 
   private async writePayload(payload: SignalFeedPayload): Promise<void> {
     const nextIndex = this.currentIndex === -1n ? 0n : this.currentIndex + 1n
-    const writer = this.bee.makeFeedWriter(this.topic, this.ownSigner)
+    const writer = this.bee.feed.makeWriter(this.topic, this.ownSigner)
 
     try {
       await writer.uploadPayload(this.stamp, JSON.stringify(payload), {

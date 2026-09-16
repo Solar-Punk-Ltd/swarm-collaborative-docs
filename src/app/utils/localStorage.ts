@@ -1,10 +1,8 @@
-import { PLACEHOLDER_STAMP, uuidV4 } from 'lib'
+import { uuidV4 } from 'lib'
 
 import {
   BEE_URL_KEY,
-  BROKER_PEER_KEY,
   DEFAULT_BEE_API_URL,
-  DEFAULT_BROKER_PEER,
   DEFAULT_ICE_SERVER_URL,
   DEFAULT_SIGNALING_SERVER_URL,
   DOCTYPE_KEY,
@@ -15,7 +13,6 @@ import {
   TOPIC_KEY,
   TRANSPORT_KEY,
   USERNAME_KEY,
-  WAKU_ADDRESS_KEY,
 } from './constants'
 import { DocType, Session, Transport } from './types'
 
@@ -42,7 +39,7 @@ export function loadTopic(): string {
 }
 
 export function loadStamp(): string {
-  return localStorage.getItem(STAMP_KEY) ?? PLACEHOLDER_STAMP
+  return localStorage.getItem(STAMP_KEY) ?? ''
 }
 
 export function loadSignalingUrl(): string {
@@ -54,17 +51,9 @@ export function loadStunUrl(): string {
 }
 
 export function loadTransport(): Transport {
-  return (localStorage.getItem(TRANSPORT_KEY) as Transport) ?? Transport.WEBRTC
+  return (localStorage.getItem(TRANSPORT_KEY) as Transport) ?? Transport.SWARM_RTC
 }
 
 export function loadDocType(): DocType {
   return (localStorage.getItem(DOCTYPE_KEY) as DocType) ?? DocType.Document
-}
-
-export function loadWakuAddress(): string {
-  return localStorage.getItem(WAKU_ADDRESS_KEY) || ''
-}
-
-export function loadBrokerPeer(): string {
-  return localStorage.getItem(BROKER_PEER_KEY) || DEFAULT_BROKER_PEER
 }

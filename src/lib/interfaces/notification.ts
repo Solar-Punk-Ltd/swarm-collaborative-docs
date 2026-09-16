@@ -4,8 +4,10 @@ interface BasePayload {
   v: string
   /** Swarm feed topic identifier for the collaborative document. */
   topic: string
-  /** Ethereum address of the publishing peer (hex, no 0x prefix). */
+  /** Session address of the publishing peer (hex, no 0x prefix). Signs the payload and owns its feeds. */
   author: string
+  /** Identity address behind `author` (hex, no 0x prefix). Shared by all sessions of the same user. */
+  identity: string
   /** Nickname of the publishing peer. */
   username: string
 }
@@ -29,7 +31,14 @@ export interface DocPayload extends BasePayload {
   sig?: string
 }
 
-export type CursorPosition = { anchor: number; head: number } | null
+/**
+ * A peer's caret, as character offsets into one shared `Y.Text`.
+ *
+ * `scope` names which text the offsets belong to — the key passed to `Y.Doc.getText(name)`,
+ * which in a multi-file document is the file path. Omit it for a single-text document;
+ * a receiver showing a different scope should not draw the cursor.
+ */
+export type CursorPosition = { anchor: number; head: number; scope?: string } | null
 
 /** Cursor-only awareness update. Sent on a ~500 ms timer, independent of doc edits. */
 export interface CursorPayload extends BasePayload {
@@ -38,8 +47,13 @@ export interface CursorPayload extends BasePayload {
   cursor: CursorPosition
 }
 
+/** Peer-leave announcement, sent on a clean shutdown so peers stop dialling that session. */
+export interface LeavePayload extends BasePayload {
+  type: 'leave'
+}
+
 /** Union of all notification payload variants exchanged between peers. */
-export type NotificationPayload = JoinPayload | DocPayload | CursorPayload
+export type NotificationPayload = JoinPayload | DocPayload | CursorPayload | LeavePayload
 
 /** Callback invoked whenever a notification arrives on the subscribed topic. */
 export type NotificationHandler = (payload: NotificationPayload) => void

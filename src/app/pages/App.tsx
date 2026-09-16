@@ -7,7 +7,7 @@ import { loadBeeUrl, loadStamp, loadTopic, loadUsername } from '../utils/localSt
 import { DocType } from '../utils/types'
 
 const App: React.FC = () => {
-  const { session, login, logout } = useSession()
+  const { session, sessionId, login, logout } = useSession()
 
   const [beeUrl, setBeeUrl] = useState(loadBeeUrl())
   const [topic, setTopic] = useState(loadTopic())
@@ -39,6 +39,7 @@ const App: React.FC = () => {
   return (
     <SessionView
       session={session}
+      sessionId={sessionId}
       beeUrl={beeUrl}
       topic={topic}
       stamp={stamp}
