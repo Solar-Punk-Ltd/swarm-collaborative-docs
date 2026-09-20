@@ -11,8 +11,8 @@ import { Room } from '../utils/room'
 
 const TAG = 'Members'
 const MAX_WRITE_RETRIES = 3
-/** Announce feeds visited in one read. Bounds the crawl on a room that has seen many principals. */
-const MAX_CRAWL_PRINCIPALS = 32
+/** Announce feeds visited in one read. Bounds the crawl on a room that has seen many identities. */
+const MAX_CRAWL_IDENTITIES = 32
 const REFRESH_COOLDOWN_MS = 60_000
 /*
  * Two writers that collide on an index would otherwise both move to the next one and collide
@@ -35,19 +35,19 @@ interface FeedReader {
  * enough to rewrite the roster, and every writer republished the whole list from its own copy, so
  * a peer that merged from a list read before someone joined silently deleted them.
  *
- * Now each principal owns one announce feed holding its own sessions and writes nothing else into
+ * Now each identity owns one announce feed holding its own sessions and writes nothing else into
  * it. Losing another member's entry is not possible, because no writer ever holds another member's
  * entry.
  *
- * One shared feed remains, and it has to: an announce feed is addressed from its principal, so a
- * principal nobody has heard of has no address anyone could poll, and a member already in the room
+ * One shared feed remains, and it has to: an announce feed is addressed from its identity, so a
+ * identity nobody has heard of has no address anyone could poll, and a member already in the room
  * would never learn that someone new arrived. The directory feed carries that and only that — an
- * append-only log naming principals. Its entries are never rewritten, so a lost race costs an
+ * append-only log naming identities. Its entries are never rewritten, so a lost race costs an
  * index and a retry rather than deleting what was already listed, which is the whole of what went
- * wrong before. Announce payloads repeat the principals their writer knows, giving a second path
+ * wrong before. Announce payloads repeat the identities their writer knows, giving a second path
  * to the same information when a directory index is stuck behind a failed read.
  *
- * Two tabs of one identity share a principal and therefore an announce feed, so they can still
+ * Two tabs of one identity share a identity and therefore an announce feed, so they can still
  * collide. That is contained rather than solved: the payload at stake is that identity's own
  * session list, the loser adopts whatever the winner wrote and retries at the next index, and the
  * tabs republish continuously. A per-browser writer election would remove it entirely.
@@ -55,7 +55,7 @@ interface FeedReader {
 export class Members implements IMembers {
   private readonly bee: Bee
   private readonly room: Room
-  private readonly principal: string
+  private readonly identity: string
   private readonly topic: Topic
   private readonly ownSigner: PrivateKey
   private readonly ownOwner: string
@@ -76,34 +76,34 @@ export class Members implements IMembers {
   private directoryNextRead: bigint = 0n
   private lastDirectoryWriteAt = 0
 
-  /** This principal's own sessions — the only announce entries this node ever writes. */
+  /** This identity's own sessions — the only announce entries this node ever writes. */
   private readonly ownSessions: Map<string, MemberEntry> = new Map()
-  /** Sessions learnt from other principals' announce feeds. */
+  /** Sessions learnt from other identities' announce feeds. */
   private readonly roster: Map<string, MemberEntry> = new Map()
-  private readonly knownPrincipals: Set<string> = new Set()
-  /** Principals confirmed present in the directory feed, so they need no further listing. */
-  private readonly listedPrincipals: Set<string> = new Set()
+  private readonly knownIdentities: Set<string> = new Set()
+  /** identities confirmed present in the directory feed, so they need no further listing. */
+  private readonly listedIdentities: Set<string> = new Set()
   private readonly peerNextIndexes: Map<string, bigint> = new Map()
 
   private readonly members: Map<string, MemberEntry> = new Map()
   private readonly indices: Map<string, bigint> = new Map()
   private readonly connStates: Map<string, PeerConnectionState> = new Map()
 
-  constructor(room: Room, principal: string, beeUrl: string, stamp: string) {
+  constructor(room: Room, identity: string, beeUrl: string, stamp: string) {
     this.room = room
-    this.principal = remove0x(principal.toLowerCase())
+    this.identity = remove0x(identity.toLowerCase())
     this.topic = Topic.fromString(room.namespace + MEMBERS_FEED_SUFFIX)
-    this.ownSigner = room.announceSigner(this.principal)
+    this.ownSigner = room.announceSigner(this.identity)
     this.ownOwner = this.ownSigner.publicKey().address().toString()
     this.directorySigner = room.directorySigner()
     this.directoryAddress = room.directoryOwner()
     this.bee = new Bee(beeUrl)
     this.stamp = stamp
 
-    this.knownPrincipals.add(this.principal)
+    this.knownIdentities.add(this.identity)
 
     for (const seed of room.seeds()) {
-      this.knownPrincipals.add(seed)
+      this.knownIdentities.add(seed)
     }
   }
 
@@ -161,19 +161,19 @@ export class Members implements IMembers {
   async read(): Promise<Map<string, MemberEntry> | null> {
     await this.readDirectory()
 
-    const queue = Array.from(this.knownPrincipals)
+    const queue = Array.from(this.knownIdentities)
 
-    for (let i = 0; i < queue.length && i < MAX_CRAWL_PRINCIPALS; i++) {
-      const principal = queue[i]
+    for (let i = 0; i < queue.length && i < MAX_CRAWL_IDENTITIES; i++) {
+      const identity = queue[i]
 
-      if (principal !== this.principal) {
-        const payload = await this.readAnnounce(principal)
+      if (identity !== this.identity) {
+        const payload = await this.readAnnounce(identity)
 
         if (payload) this.mergeAnnounce(payload, queue)
       }
     }
 
-    await this.listUnlistedPrincipals()
+    await this.listUnlistedIdentities()
     await this.republishDirectoryIfStale()
 
     const merged = this.merged()
@@ -185,9 +185,9 @@ export class Members implements IMembers {
     this.ownSessions.set(remove0x(address.toLowerCase()), entry)
 
     // Listed before announcing: a member already in the room polls the directory to learn that
-    // this principal exists, and nothing else would tell them an announce feed is worth reading.
+    // this identity exists, and nothing else would tell them an announce feed is worth reading.
     await this.readDirectory()
-    await this.listUnlistedPrincipals()
+    await this.listUnlistedIdentities()
     await this.publish()
 
     return this.merged()
@@ -214,7 +214,7 @@ export class Members implements IMembers {
 
   /*
    * Every entry matters here, unlike the announce feeds: the directory is an append-only log of
-   * principals and the newest entry names only the principals its writer added. `drainFeed` reports
+   * identities and the newest entry names only the identities its writer added. `drainFeed` reports
    * each one as it is read, and the cursor never moves over an index that was not read, so an entry
    * a peer has not written yet is waited on rather than stepped past.
    */
@@ -234,15 +234,15 @@ export class Members implements IMembers {
   }
 
   private mergeDirectory(payload: DirectoryPayload): void {
-    for (const candidate of payload.principals ?? []) {
+    for (const candidate of payload.identities ?? []) {
       const key = remove0x(candidate.toLowerCase())
 
       if (key) {
-        this.listedPrincipals.add(key)
+        this.listedIdentities.add(key)
 
-        if (!this.knownPrincipals.has(key)) {
-          this.knownPrincipals.add(key)
-          this.logger.debug(`${TAG} directory names principal ${key.slice(0, 8)}…`)
+        if (!this.knownIdentities.has(key)) {
+          this.knownIdentities.add(key)
+          this.logger.debug(`${TAG} directory names identity ${key.slice(0, 8)}…`)
         }
       }
     }
@@ -250,21 +250,21 @@ export class Members implements IMembers {
 
   /*
    * Adds anything known but not listed, which is both this session's own first join and a repair:
-   * a principal learnt from another member's `known` list but missing from the directory would
-   * otherwise stay invisible to everyone who has only ever read the directory. The own-principal
+   * a identity learnt from another member's `known` list but missing from the directory would
+   * otherwise stay invisible to everyone who has only ever read the directory. The own-identity
    * case is not rate limited, because it is the join path and a member nobody can see is useless.
    */
-  private async listUnlistedPrincipals(): Promise<void> {
-    const missing = Array.from(this.knownPrincipals).filter(principal => !this.listedPrincipals.has(principal))
+  private async listUnlistedIdentities(): Promise<void> {
+    const missing = Array.from(this.knownIdentities).filter(identity => !this.listedIdentities.has(identity))
 
     if (missing.length === 0) return
 
-    if (!missing.includes(this.principal) && Date.now() - this.lastDirectoryWriteAt < REFRESH_COOLDOWN_MS) return
+    if (!missing.includes(this.identity) && Date.now() - this.lastDirectoryWriteAt < REFRESH_COOLDOWN_MS) return
 
     await this.appendDirectory(missing)
   }
 
-  private async appendDirectory(principals: string[]): Promise<void> {
+  private async appendDirectory(identities: string[]): Promise<void> {
     const reader = this.bee.feed.makeReader(this.topic, this.directoryAddress)
     const writer = this.bee.feed.makeWriter(this.topic, this.directorySigner)
 
@@ -276,7 +276,7 @@ export class Members implements IMembers {
       return
     }
 
-    const payload: DirectoryPayload = { v: API_VERSION, principals }
+    const payload: DirectoryPayload = { v: API_VERSION, identities }
 
     for (let attempt = 1; attempt <= MAX_WRITE_RETRIES; attempt++) {
       const nextIndex = this.directoryIndex + 1n
@@ -298,12 +298,12 @@ export class Members implements IMembers {
       const verified = await this.readDirectoryIndex(reader, nextIndex)
 
       if (verified.status === 'ok') {
-        // Whoever holds this index, their principals are now listed — take them either way.
+        // Whoever holds this index, their identities are now listed — take them either way.
         this.mergeDirectory(verified.payload)
 
-        if (principals.every(principal => this.listedPrincipals.has(principal))) {
+        if (identities.every(identity => this.listedIdentities.has(identity))) {
           this.lastDirectoryWriteAt = Date.now()
-          this.logger.debug(`${TAG} directory index ${nextIndex}: listed ${principals.length} principal(s)`)
+          this.logger.debug(`${TAG} directory index ${nextIndex}: listed ${identities.length} identity(s)`)
 
           return
         }
@@ -315,7 +315,7 @@ export class Members implements IMembers {
       await sleep(retryJitter())
     }
 
-    this.logger.warn(`${TAG} could not list ${principals.length} principal(s) after ${MAX_WRITE_RETRIES} attempts`)
+    this.logger.warn(`${TAG} could not list ${identities.length} identity(s) after ${MAX_WRITE_RETRIES} attempts`)
   }
 
   private async readDirectoryIndex(reader: FeedReader, index: bigint): Promise<FeedRead<DirectoryPayload>> {
@@ -323,7 +323,7 @@ export class Members implements IMembers {
       const result = await reader.downloadPayload({ index: FeedIndex.fromBigInt(index) })
       const payload = JSON.parse(result.payload.toUtf8()) as DirectoryPayload
 
-      if (!Array.isArray(payload?.principals)) {
+      if (!Array.isArray(payload?.identities)) {
         return { status: 'absent' }
       }
 
@@ -345,19 +345,19 @@ export class Members implements IMembers {
     this.logger.debug(`${TAG} directory feed tail resolved at index ${this.directoryIndex}`)
   }
 
-  private async readAnnounce(principal: string): Promise<AnnouncePayload | null> {
-    const owner = this.room.announceOwner(principal)
+  private async readAnnounce(identity: string): Promise<AnnouncePayload | null> {
+    const owner = this.room.announceOwner(identity)
     const reader = this.bee.feed.makeReader(this.topic, owner)
 
     const { latest, next } = await drainFeed(
       index => this.readIndex(reader, index),
-      this.peerNextIndexes.get(principal) ?? 0n,
+      this.peerNextIndexes.get(identity) ?? 0n,
       owner,
       this.probe,
-      `${TAG} announce(${principal.slice(0, 8)}…)`,
+      `${TAG} announce(${identity.slice(0, 8)}…)`,
     )
 
-    this.peerNextIndexes.set(principal, next)
+    this.peerNextIndexes.set(identity, next)
 
     return latest
   }
@@ -377,10 +377,10 @@ export class Members implements IMembers {
     for (const candidate of payload.known ?? []) {
       const key = remove0x(candidate.toLowerCase())
 
-      if (key && !this.knownPrincipals.has(key)) {
-        this.knownPrincipals.add(key)
+      if (key && !this.knownIdentities.has(key)) {
+        this.knownIdentities.add(key)
         queue.push(key)
-        this.logger.debug(`${TAG} discovered principal ${key.slice(0, 8)}… via ${payload.principal.slice(0, 8)}…`)
+        this.logger.debug(`${TAG} discovered identity ${key.slice(0, 8)}… via ${payload.identity.slice(0, 8)}…`)
       }
     }
   }
@@ -390,7 +390,7 @@ export class Members implements IMembers {
       const result = await reader.downloadPayload({ index: FeedIndex.fromBigInt(index) })
       const payload = JSON.parse(result.payload.toUtf8()) as AnnouncePayload
 
-      if (!payload?.principal) {
+      if (!payload?.identity) {
         return { status: 'absent' }
       }
 
@@ -402,16 +402,16 @@ export class Members implements IMembers {
 
   /*
    * The `known` list in an announce payload is a snapshot of what its writer knew when it wrote,
-   * so it goes stale as the room grows. It is a second path to the same principals the directory
+   * so it goes stale as the room grows. It is a second path to the same identities the directory
    * feed carries, useful when a directory index is stuck behind a failed read, and it is worth
    * keeping fresh — but only at one feed write per interval, however fast the room widens.
    */
   private async republishDirectoryIfStale(): Promise<void> {
-    if (this.ownSessions.size === 0 || this.knownPrincipals.size <= this.publishedKnownCount) return
+    if (this.ownSessions.size === 0 || this.knownIdentities.size <= this.publishedKnownCount) return
 
     if (Date.now() - this.lastPublishAt < REFRESH_COOLDOWN_MS) return
 
-    this.logger.debug(`${TAG} known list grew to ${this.knownPrincipals.size} principal(s) — republishing`)
+    this.logger.debug(`${TAG} known list grew to ${this.knownIdentities.size} identity(s) — republishing`)
     await this.publish()
   }
 
@@ -431,9 +431,9 @@ export class Members implements IMembers {
       const wanted = Array.from(this.ownSessions.keys())
       const payload: AnnouncePayload = {
         v: API_VERSION,
-        principal: this.principal,
+        identity: this.identity,
         sessions: Object.fromEntries(this.ownSessions),
-        known: Array.from(this.knownPrincipals),
+        known: Array.from(this.knownIdentities),
       }
 
       const nextIndex = this.ownIndex + 1n
@@ -467,7 +467,7 @@ export class Members implements IMembers {
           this.lastPublishAt = Date.now()
           this.publishedKnownCount = payload.known.length
           this.logger.debug(
-            `${TAG} published index ${nextIndex}: ${wanted.length} session(s), ${payload.known.length} principal(s)`,
+            `${TAG} published index ${nextIndex}: ${wanted.length} session(s), ${payload.known.length} identity(s)`,
           )
 
           return

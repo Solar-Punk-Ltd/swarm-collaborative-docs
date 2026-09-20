@@ -52,14 +52,14 @@
 <rect x="100" y="240" width="320" height="180" rx="10" class="layer-blue"/>
 <text class="th text-blue" x="260" y="262" text-anchor="middle">Bee node  (local or gateway)</text>
 <rect x="116" y="274" width="130" height="56" rx="6" class="inner-blue"/>
-<text class="th text-blue" x="181" y="296" text-anchor="middle">Swarm feeds</text>
+<text class="th text-blue" x="181" y="296" text-anchor="middle">Session feeds</text>
 <text class="ts sub" x="181" y="312" text-anchor="middle">signal + snapshot</text>
 <rect x="274" y="274" width="130" height="56" rx="6" class="inner-blue"/>
-<text class="th text-blue" x="339" y="296" text-anchor="middle">Member feed</text>
-<text class="ts sub" x="339" y="312" text-anchor="middle">peer discovery</text>
+<text class="th text-blue" x="339" y="296" text-anchor="middle">Room feeds</text>
+<text class="ts sub" x="339" y="312" text-anchor="middle">directory + announce</text>
 <rect x="116" y="344" width="288" height="36" rx="6" class="inner-blue"/>
 <text class="th text-blue" x="260" y="362" text-anchor="middle">Swarm network</text>
-<text class="ts sub" x="260" y="378" text-anchor="middle">immutable chunk storage</text>
+<text class="ts sub" x="260" y="378" text-anchor="middle">immutable chunks, feeds keyed by the room secret</text>
 
 <!-- STUN server -->
 <rect x="100" y="440" width="320" height="56" rx="10" class="layer-gray"/>

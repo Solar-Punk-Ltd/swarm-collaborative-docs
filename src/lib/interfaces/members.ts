@@ -30,26 +30,26 @@ export interface MemberEntry {
 }
 
 /**
- * Everything one principal publishes about a room, written to that principal's announce feed.
+ * Everything one identity publishes about a room, written to that identity's announce feed.
  *
  * Each entry replaces the last, so only the newest index matters. `known` is what makes discovery
- * work without a shared feed: announce feeds are addressed per principal, so a reader that learns
- * a principal can derive its feed and read it, and following `known` outward from the room's
+ * work without a shared feed: announce feeds are addressed per identity, so a reader that learns
+ * a identity can derive its feed and read it, and following `known` outward from the room's
  * creator reaches everyone the room has seen.
  */
 export interface AnnouncePayload {
   /** Payload format version. */
   v: string
-  /** Principal owning this feed. Sessions listed here belong to it. */
-  principal: string
-  /** This principal's sessions, keyed by session address. */
+  /** identity owning this feed. Sessions listed here belong to it. */
+  identity: string
+  /** This identity's sessions, keyed by session address. */
   sessions: Record<string, MemberEntry>
-  /** Principals this writer has seen, including itself. Followed transitively by readers. */
+  /** identities this writer has seen, including itself. Followed transitively by readers. */
   known: string[]
 }
 
 /**
- * One entry of the room's directory feed, naming principals that hold announce feeds.
+ * One entry of the room's directory feed, naming identities that hold announce feeds.
  *
  * The only feed in a room with more than one writer, and the only one whose older entries still
  * matter: an entry is never rewritten, so readers take the union of all of them and a write that
@@ -58,8 +58,8 @@ export interface AnnouncePayload {
 export interface DirectoryPayload {
   /** Payload format version. */
   v: string
-  /** Principals this entry adds to the room. Usually one — the writer's own. */
-  principals: string[]
+  /** Identities this entry adds to the room. Usually one — the writer's own. */
+  identities: string[]
 }
 
 /**
@@ -67,8 +67,8 @@ export interface DirectoryPayload {
  *
  * Two layers of state:
  * - **Local session** — in-memory set of registered peer addresses and their last known feed index.
- * - **Swarm discovery** — a directory feed listing the room's principals, plus one announce feed
- *   per principal, each with a single writer, holding that principal's sessions.
+ * - **Swarm discovery** — a directory feed listing the room's identities, plus one announce feed
+ *   per identity, each with a single writer, holding that identity's sessions.
  *
  * Every signing key here derives from the room secret, so knowing a room's public identifier
  * grants nothing — only an invite link does.
@@ -99,19 +99,19 @@ export interface IMembers {
   allConnectionStates(): ReadonlyMap<string, PeerConnectionState>
 
   /**
-   * Reads every announce feed reachable from the principals known so far, following each payload's
+   * Reads every announce feed reachable from the identities known so far, following each payload's
    * `known` list outward. Returns the merged member list, or `null` if nothing was readable.
    */
   read(): Promise<Map<string, MemberEntry> | null>
 
   /**
-   * Publishes `address` as a session of this principal on its own announce feed.
+   * Publishes `address` as a session of this identity on its own announce feed.
    * Returns the merged member list as it stands after the write.
    */
   add(address: string, entry: MemberEntry): Promise<Map<string, MemberEntry>>
 
   /**
-   * Marks `address` as no longer live on this principal's announce feed, so other peers stop
+   * Marks `address` as no longer live on this identity's announce feed, so other peers stop
    * dialling it. Best-effort: a failed write is swallowed, since this runs during shutdown.
    */
   retire(address: string): Promise<void>

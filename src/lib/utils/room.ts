@@ -12,8 +12,8 @@ import { remove0x, uuidV4 } from './common'
  * credential, so anyone who learns it can rewrite the room.
  *
  * Every feed key derives from the secret, so an invite carries nothing that can go stale. The one
- * exception is `creator`: announce feeds are addressed per principal, and a joiner holding only
- * the key would have no principal to start from until it has read the directory feed.
+ * exception is `creator`: announce feeds are addressed per identity, and a joiner holding only
+ * the key would have no identity to start from until it has read the directory feed.
  */
 
 const SCHEME = 'swarmdoc:v1'
@@ -24,7 +24,7 @@ const DISPLAY_ID_CHARS = 32
 export interface RoomInvite {
   /** Room secret. Whoever holds it can read and write every feed in the room. */
   key: string
-  /** Principal of the room's creator — the starting point for member discovery. */
+  /** identity of the room's creator — the starting point for member discovery. */
   creator: string
   /** Transport the room was created with, so a joiner does not have to pick one. */
   transport?: string
@@ -41,7 +41,7 @@ export function createRoomKey(): string {
 export class Room {
   /** Room secret. Everything below is derived from it. */
   public readonly key: string
-  /** Creator's principal, or `null` when there is no seed to start discovery from. */
+  /** Creator's identity, or `null` when there is no seed to start discovery from. */
   public readonly creator: string | null
   /** Public identifier, safe to display and log — never a credential. */
   public readonly id: string
@@ -59,27 +59,27 @@ export class Room {
   }
 
   /**
-   * Signing key for a principal's announce feed.
+   * Signing key for a identity's announce feed.
    *
-   * One writer per principal, so an announce feed never has to merge with anyone else's write —
+   * One writer per identity, so an announce feed never has to merge with anyone else's write —
    * the loss of other members' entries that the shared roster feed suffered is structurally
    * impossible here.
    */
-  announceSigner(principal: string): PrivateKey {
-    return getSigner(`${SCHEME}:ann:${this.secret}:${remove0x(principal.toLowerCase())}`)
+  announceSigner(identity: string): PrivateKey {
+    return getSigner(`${SCHEME}:ann:${this.secret}:${remove0x(identity.toLowerCase())}`)
   }
 
-  /** Owner address of a principal's announce feed, which is what a reader needs. */
-  announceOwner(principal: string): string {
-    return this.announceSigner(principal).publicKey().address().toString()
+  /** Owner address of a identity's announce feed, which is what a reader needs. */
+  announceOwner(identity: string): string {
+    return this.announceSigner(identity).publicKey().address().toString()
   }
 
   /**
    * Signing key for the room's directory feed — the one feed every member may write.
    *
    * It exists because nothing else lets a member already in the room learn that someone new has
-   * arrived: announce feeds are addressed from a principal, and a principal nobody has heard of
-   * has no derivable address. Entries only ever name principals and are never rewritten, so a
+   * arrived: announce feeds are addressed from a identity, and a identity nobody has heard of
+   * has no derivable address. Entries only ever name identities and are never rewritten, so a
    * simultaneous write costs one index and a retry instead of deleting what was already there.
    */
   directorySigner(): PrivateKey {
@@ -91,7 +91,7 @@ export class Room {
     return this.directorySigner().publicKey().address().toString()
   }
 
-  /** Principals discovery can start from before any feed has been read. */
+  /** Identities discovery can start from before any feed has been read. */
   seeds(): string[] {
     return this.creator ? [this.creator] : []
   }

@@ -1,6 +1,6 @@
 <svg width="100%" viewBox="0 0 680 800" role="img" xmlns="http://www.w3.org/2000/svg">
-<title>swarm-collaborative-docs transport flows</title>
-<desc>Side-by-side flowchart comparing y-webrtc and swarm-rtc transports across peer discovery, connection setup, doc sync, snapshot persistence, and cursor awareness</desc>
+<title>swarm-collaborative-docs transport data flows</title>
+<desc>Side-by-side flowchart comparing the SwarmRtc and signaling-server transports across peer discovery, connection setup, first sync, persistence, catch-up and cursor awareness</desc>
 
 <defs>
   <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -11,145 +11,133 @@
     .th  { font-size: 14px; font-weight: 500; }
     .ts  { font-size: 12px; font-weight: 400; }
 
-    .hdr-purple { fill: #EEEDFE; stroke: #7F77DD; }
     .hdr-teal   { fill: #E1F5EE; stroke: #1D9E75; }
-    .box-purple { fill: #D8D6F8; stroke: #7F77DD; }
+    .hdr-purple { fill: #EEEDFE; stroke: #7F77DD; }
     .box-teal   { fill: #C2ECD9; stroke: #1D9E75; }
+    .box-purple { fill: #D8D6F8; stroke: #7F77DD; }
     .box-blue   { fill: #C8DFF6; stroke: #378ADD; }
     .box-amber  { fill: #FAC775; stroke: #BA7517; }
 
-    .text-purple { fill: #3C3489; }
     .text-teal   { fill: #0F6E56; }
+    .text-purple { fill: #3C3489; }
     .text-blue   { fill: #0C447C; }
     .text-amber  { fill: #633806; }
     .text-sub    { fill: #5F5E5A; }
     .text-label  { fill: #888780; }
 
-    .divider     { stroke: #C8C6BE; stroke-width: 0.5; }
-    .center-div  { stroke: #C8C6BE; stroke-width: 0.5; stroke-dasharray: 4 3; }
+    .divider    { stroke: #C8C6BE; stroke-width: 0.5; }
+    .center-div { stroke: #C8C6BE; stroke-width: 0.5; stroke-dasharray: 4 3; }
   </style>
 </defs>
 
-<!-- ── centre divider ── -->
-<line x1="340" y1="20" x2="340" y2="780" class="center-div"/>
+<!-- ── centre dividers ── -->
+<line x1="340" y1="20"  x2="340" y2="450" class="center-div"/>
+<line x1="340" y1="676" x2="340" y2="748" class="center-div"/>
 
 <!-- ══ COLUMN HEADERS ══ -->
-<rect x="30"  y="20" width="295" height="40" rx="8" stroke-width="0.5" class="hdr-purple"/>
-<text class="th text-purple" x="178" y="44" text-anchor="middle">y-webrtc transport</text>
+<rect x="30" y="20" width="295" height="40" rx="8" stroke-width="0.5" class="hdr-teal"/>
+<text class="th text-teal" x="177" y="44" text-anchor="middle">SwarmRtc transport</text>
 
-<rect x="355" y="20" width="295" height="40" rx="8" stroke-width="0.5" class="hdr-teal"/>
-<text class="th text-teal"   x="503" y="44" text-anchor="middle">swarm-rtc transport</text>
-
+<rect x="355" y="20" width="295" height="40" rx="8" stroke-width="0.5" class="hdr-purple"/>
+<text class="th text-purple" x="502" y="44" text-anchor="middle">Signaling server transport</text>
 
 <!-- ══ SECTION 1: peer discovery ══ -->
-<line x1="30"  y1="80" x2="320" y2="80" class="divider"/>
+<line x1="30" y1="80" x2="320" y2="80" class="divider"/>
 <line x1="360" y1="80" x2="650" y2="80" class="divider"/>
 <text class="ts text-label" x="340" y="77" text-anchor="middle">peer discovery</text>
 
-<rect x="50"  y="90" width="275" height="52" rx="6" stroke-width="0.5" class="box-purple"/>
-<text class="th text-purple" x="188" y="112" text-anchor="middle">Y.Awareness change event</text>
-<text class="ts text-sub"    x="188" y="130" text-anchor="middle">new clientId → onPeerDiscovered()</text>
+<rect x="50" y="90" width="275" height="52" rx="6" stroke-width="0.5" class="box-teal"/>
+<text class="th text-teal" x="188" y="112" text-anchor="middle">directory feed → announce feeds</text>
+<text class="ts text-sub"  x="188" y="130" text-anchor="middle">Members.read(), re-read every 5 s</text>
 
-<rect x="355" y="90" width="275" height="52" rx="6" stroke-width="0.5" class="box-teal"/>
-<text class="th text-teal" x="493" y="112" text-anchor="middle">members feed on Swarm</text>
-<text class="ts text-sub"  x="493" y="130" text-anchor="middle">Members.add(), manual refresh</text>
+<rect x="355" y="90" width="275" height="52" rx="6" stroke-width="0.5" class="box-purple"/>
+<text class="th text-purple" x="493" y="112" text-anchor="middle">Y.Awareness peer event</text>
+<text class="ts text-sub"    x="493" y="130" text-anchor="middle">same feeds as the durable fallback</text>
 
-<line x1="188" y1="142" x2="188" y2="164" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
-<line x1="493" y1="142" x2="493" y2="164" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
-
+<line x1="188" y1="142" x2="188" y2="158" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+<line x1="493" y1="142" x2="493" y2="158" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
 
 <!-- ══ SECTION 2: connection setup ══ -->
-<line x1="30"  y1="182" x2="320" y2="182" class="divider"/>
-<line x1="360" y1="182" x2="650" y2="182" class="divider"/>
-<text class="ts text-label" x="340" y="179" text-anchor="middle">connection setup</text>
+<line x1="30" y1="168" x2="320" y2="168" class="divider"/>
+<line x1="360" y1="168" x2="650" y2="168" class="divider"/>
+<text class="ts text-label" x="340" y="165" text-anchor="middle">connection setup</text>
 
-<rect x="50"  y="192" width="275" height="52" rx="6" stroke-width="0.5" class="box-purple"/>
-<text class="th text-purple" x="188" y="214" text-anchor="middle">WebrtcProvider auto-connects</text>
-<text class="ts text-sub"    x="188" y="232" text-anchor="middle">via external WS signaling server</text>
+<rect x="50" y="178" width="275" height="52" rx="6" stroke-width="0.5" class="box-teal"/>
+<text class="th text-teal" x="188" y="200" text-anchor="middle">offer written to own signal feed</text>
+<text class="ts text-sub"  x="188" y="218" text-anchor="middle">lower session address initiates</text>
 
-<rect x="355" y="192" width="275" height="52" rx="6" stroke-width="0.5" class="box-teal"/>
-<text class="th text-teal" x="493" y="214" text-anchor="middle">SDP offer written to Swarm feed</text>
-<text class="ts text-sub"  x="493" y="232" text-anchor="middle">lower address = initiator</text>
+<rect x="355" y="178" width="275" height="52" rx="6" stroke-width="0.5" class="box-purple"/>
+<text class="th text-purple" x="493" y="200" text-anchor="middle">WebrtcProvider connects</text>
+<text class="ts text-sub"    x="493" y="218" text-anchor="middle">SDP + ICE relayed by the WS server</text>
 
-<line x1="493" y1="244" x2="493" y2="266" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+<line x1="188" y1="230" x2="188" y2="242" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+<line x1="493" y1="230" x2="493" y2="242" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
 
-<rect x="355" y="266" width="275" height="52" rx="6" stroke-width="0.5" class="box-teal"/>
-<text class="th text-teal" x="493" y="288" text-anchor="middle">answerer polls signal feed</text>
-<text class="ts text-sub"  x="493" y="306" text-anchor="middle">SDP answer written back</text>
+<rect x="50" y="242" width="275" height="52" rx="6" stroke-width="0.5" class="box-teal"/>
+<text class="th text-teal" x="188" y="264" text-anchor="middle">answerer polls 2 s, writes answer</text>
+<text class="ts text-sub"  x="188" y="282" text-anchor="middle">reads spaced — an early miss blinds it</text>
 
-<line x1="493" y1="318" x2="493" y2="340" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+<rect x="355" y="242" width="275" height="52" rx="6" stroke-width="0.5" class="box-purple"/>
+<text class="th text-purple" x="493" y="264" text-anchor="middle">y-webrtc owns reconnection</text>
+<text class="ts text-sub"    x="493" y="282" text-anchor="middle">peers arrive as awareness entries</text>
 
+<line x1="188" y1="294" x2="188" y2="306" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
 
-<!-- ══ SECTION 3: doc sync ══ -->
-<line x1="30"  y1="358" x2="320" y2="358" class="divider"/>
-<line x1="360" y1="358" x2="650" y2="358" class="divider"/>
-<text class="ts text-label" x="340" y="355" text-anchor="middle">doc sync</text>
+<rect x="50" y="306" width="275" height="52" rx="6" stroke-width="0.5" class="box-teal"/>
+<text class="th text-teal" x="188" y="328" text-anchor="middle">90 s watchdog → renegotiate</text>
+<text class="ts text-sub"  x="188" y="346" text-anchor="middle">retries 5 s apart, capped at 5</text>
 
-<rect x="50"  y="368" width="275" height="52" rx="6" stroke-width="0.5" class="box-purple"/>
-<text class="th text-purple" x="188" y="390" text-anchor="middle">y-webrtc owns Y.Doc sync</text>
-<text class="ts text-sub"    x="188" y="408" text-anchor="middle">DataChannels managed by library</text>
+<!-- ══ SECTION 3: first sync ══ -->
+<line x1="30" y1="376" x2="320" y2="376" class="divider"/>
+<line x1="360" y1="376" x2="650" y2="376" class="divider"/>
+<text class="ts text-label" x="340" y="373" text-anchor="middle">first sync, on channel open</text>
 
-<rect x="355" y="340" width="275" height="52" rx="6" stroke-width="0.5" class="box-teal"/>
-<text class="th text-teal" x="493" y="362" text-anchor="middle">DataChannel opens</text>
-<text class="ts text-sub"  x="493" y="380" text-anchor="middle">full state snapshot sent to peer</text>
+<rect x="50" y="386" width="275" height="52" rx="6" stroke-width="0.5" class="box-teal"/>
+<text class="th text-teal" x="188" y="408" text-anchor="middle">state vectors exchanged</text>
+<text class="ts text-sub"  x="188" y="426" text-anchor="middle">each side replies with the diff only</text>
 
-<line x1="493" y1="392" x2="493" y2="414" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+<rect x="355" y="386" width="275" height="52" rx="6" stroke-width="0.5" class="box-purple"/>
+<text class="th text-purple" x="493" y="408" text-anchor="middle">Yjs sync protocol</text>
+<text class="ts text-sub"    x="493" y="426" text-anchor="middle">run inside the provider</text>
 
-<rect x="355" y="414" width="275" height="52" rx="6" stroke-width="0.5" class="box-teal"/>
-<text class="th text-teal" x="493" y="436" text-anchor="middle">Y.Doc 'update' listener</text>
-<text class="ts text-sub"  x="493" y="454" text-anchor="middle">binary update → channel.send()</text>
+<!-- ══ SECTION 4: local edit → persistence ══ -->
+<line x1="30" y1="456" x2="650" y2="456" class="divider"/>
+<text class="ts text-label" x="340" y="453" text-anchor="middle">local edit → persistence  (both transports)</text>
 
-<line x1="188" y1="420" x2="188" y2="448" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
-<line x1="493" y1="466" x2="493" y2="488" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+<rect x="50" y="466" width="580" height="52" rx="6" stroke-width="0.5" class="box-blue"/>
+<text class="th text-blue" x="340" y="488" text-anchor="middle">500 ms debounce → publishSnapshot()</text>
+<text class="ts text-sub"  x="340" y="506" text-anchor="middle">full Y.Doc state to this session's feed, signed delta broadcast to open channels</text>
 
+<line x1="340" y1="518" x2="340" y2="530" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
 
-<!-- ══ SECTION 4: snapshot persistence ══ -->
-<line x1="30"  y1="506" x2="650" y2="506" class="divider"/>
-<text class="ts text-label" x="340" y="503" text-anchor="middle">snapshot persistence  (both transports)</text>
+<rect x="50" y="530" width="580" height="52" rx="6" stroke-width="0.5" class="box-blue"/>
+<text class="th text-blue" x="340" y="552" text-anchor="middle">receiver verifies the signature, then applies the delta</text>
+<text class="ts text-sub"  x="340" y="570" text-anchor="middle">a feed-index gap means fetching that peer's snapshot instead</text>
 
-<rect x="50"  y="516" width="275" height="52" rx="6" stroke-width="0.5" class="box-blue"/>
-<text class="th text-blue" x="188" y="538" text-anchor="middle">debounce → publishSnapshot()</text>
-<text class="ts text-sub"  x="188" y="556" text-anchor="middle">writeDoc() to own Swarm feed</text>
+<!-- ══ SECTION 5: catching up ══ -->
+<line x1="30" y1="600" x2="650" y2="600" class="divider"/>
+<text class="ts text-label" x="340" y="597" text-anchor="middle">catching up  (both transports)</text>
 
-<rect x="355" y="516" width="275" height="52" rx="6" stroke-width="0.5" class="box-blue"/>
-<text class="th text-blue" x="493" y="538" text-anchor="middle">DocPayload published (delta + sig)</text>
-<text class="ts text-sub"  x="493" y="556" text-anchor="middle">peers call fetchLatestFromMember()</text>
+<rect x="50" y="610" width="580" height="52" rx="6" stroke-width="0.5" class="box-blue"/>
+<text class="th text-blue" x="340" y="632" text-anchor="middle">15 s snapshot poll for every peer without a channel</text>
+<text class="ts text-sub"  x="340" y="650" text-anchor="middle">a channel opening triggers an immediate re-read · DOC_SYNC_STATE gates the editor</text>
 
-<line x1="188" y1="568" x2="188" y2="590" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
-<line x1="493" y1="568" x2="493" y2="590" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+<!-- ══ SECTION 6: cursors ══ -->
+<line x1="30" y1="680" x2="320" y2="680" class="divider"/>
+<line x1="360" y1="680" x2="650" y2="680" class="divider"/>
+<text class="ts text-label" x="340" y="677" text-anchor="middle">cursors &amp; presence</text>
 
+<rect x="50" y="690" width="275" height="52" rx="6" stroke-width="0.5" class="box-amber"/>
+<text class="th text-amber" x="188" y="712" text-anchor="middle">CursorPayload as a JSON frame</text>
+<text class="ts text-sub"   x="188" y="730" text-anchor="middle">on the same DataChannel</text>
 
-<!-- ══ SECTION 5: cursor awareness ══ -->
-<line x1="30"  y1="608" x2="320" y2="608" class="divider"/>
-<line x1="360" y1="608" x2="650" y2="608" class="divider"/>
-<text class="ts text-label" x="340" y="605" text-anchor="middle">cursor awareness</text>
+<rect x="355" y="690" width="275" height="52" rx="6" stroke-width="0.5" class="box-amber"/>
+<text class="th text-amber" x="493" y="712" text-anchor="middle">cursor → Y.Awareness field</text>
+<text class="ts text-sub"   x="493" y="730" text-anchor="middle">bridged back as CursorPayload</text>
 
-<rect x="50"  y="618" width="275" height="52" rx="6" stroke-width="0.5" class="box-amber"/>
-<text class="th text-amber" x="188" y="640" text-anchor="middle">publish(CursorPayload)</text>
-<text class="ts text-sub"   x="188" y="658" text-anchor="middle">→ awareness.setLocalStateField()</text>
+<line x1="188" y1="742" x2="188" y2="758" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+<line x1="493" y1="742" x2="493" y2="758" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
 
-<rect x="355" y="618" width="275" height="52" rx="6" stroke-width="0.5" class="box-amber"/>
-<text class="th text-amber" x="493" y="640" text-anchor="middle">publish(CursorPayload)</text>
-<text class="ts text-sub"   x="493" y="658" text-anchor="middle">→ channel.send() as JSON string</text>
-
-<line x1="188" y1="670" x2="188" y2="692" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
-<line x1="493" y1="670" x2="493" y2="692" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
-
-<rect x="50"  y="692" width="275" height="52" rx="6" stroke-width="0.5" class="box-amber"/>
-<text class="th text-amber" x="188" y="714" text-anchor="middle">awareness 'change' event</text>
-<text class="ts text-sub"   x="188" y="732" text-anchor="middle">→ handler(CursorPayload)</text>
-
-<rect x="355" y="692" width="275" height="52" rx="6" stroke-width="0.5" class="box-amber"/>
-<text class="th text-amber" x="493" y="714" text-anchor="middle">DataChannel 'message' (string)</text>
-<text class="ts text-sub"   x="493" y="732" text-anchor="middle">→ handler(CursorPayload)</text>
-
-<line x1="188" y1="744" x2="188" y2="766" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
-<line x1="493" y1="744" x2="493" y2="766" stroke="#888" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
-
-<rect x="50"  y="766" width="275" height="14" rx="4" stroke-width="0" fill="none"/>
-<text class="ts text-sub" x="188" y="778" text-anchor="middle">DOC_EVENTS.AWARENESS_UPDATED → UI</text>
-
-<rect x="355" y="766" width="275" height="14" rx="4" stroke-width="0" fill="none"/>
-<text class="ts text-sub" x="493" y="778" text-anchor="middle">DOC_EVENTS.AWARENESS_UPDATED → UI</text>
+<text class="ts text-sub" x="340" y="778" text-anchor="middle">DOC_EVENTS.AWARENESS_UPDATED → UI — a caret is dropped once its owner is no longer live and connected</text>
 
 </svg>

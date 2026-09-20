@@ -6,7 +6,7 @@ export const FEED_INDEX_ZERO = FeedIndex.fromBigInt(0n)
 export const DOC_FEED_SUFFIX = '_doc'
 /**
  * Feed ID suffix for the announce feeds that carry member discovery: `<namespace>_members`.
- * One topic for the whole room; the owner address differs per principal, so every announce
+ * One topic for the whole room; the owner address differs per identity, so every announce
  * feed has exactly one writer.
  */
 export const MEMBERS_FEED_SUFFIX = '_members'
