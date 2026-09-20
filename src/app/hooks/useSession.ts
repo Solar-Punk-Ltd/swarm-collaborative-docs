@@ -70,6 +70,9 @@ export function useSession() {
     setSession(s)
   }
 
+  // The session id is kept: logging back in rejoins the same session rather than stranding the
+  // old one in the member list, and the feed writers resolve their true tail before writing, so
+  // picking up feeds this session already wrote is safe.
   const logout = () => {
     setSession(null)
   }

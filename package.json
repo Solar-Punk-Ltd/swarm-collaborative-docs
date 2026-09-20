@@ -6,8 +6,19 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Solar-Punk-Ltd/swarm-collaborative-docs"
+    "url": "https://github.com/Solar-Punk-Ltd/swarm-collaborative-docs.git"
   },
+  "homepage": "https://github.com/Solar-Punk-Ltd/swarm-collaborative-docs#readme",
+  "bugs": {
+    "url": "https://github.com/Solar-Punk-Ltd/swarm-collaborative-docs/issues"
+  },
+  "keywords": [
+    "swarm",
+    "bee",
+    "collaborative",
+    "p2p",
+    "docs"
+  ],
   "type": "module",
   "main": "./dist/SwarmCollaborativeDocs.cjs",
   "module": "./dist/SwarmCollaborativeDocs.mjs",
@@ -87,6 +98,7 @@
   },
   "engines": {
     "node": ">=22.12.0",
-    "pnpm": ">=11.0.0"
+    "pnpm": ">=11.0.0",
+    "bee": ">=2.8.1"
   }
 }

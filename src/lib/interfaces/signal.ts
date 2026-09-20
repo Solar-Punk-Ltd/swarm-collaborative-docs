@@ -44,4 +44,7 @@ export interface ISwarmSignal {
 
   /** Writes an empty payload to own feed, clearing all records from the previous session. */
   clearOwn(): Promise<void>
+
+  /** Stops further writes. Queued work that has not started yet becomes a no-op. */
+  stop(): void
 }

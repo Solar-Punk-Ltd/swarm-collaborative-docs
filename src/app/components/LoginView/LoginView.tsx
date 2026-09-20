@@ -262,7 +262,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 {beeUrl === DEFAULT_BEE_API_URL && (
                   <span className="login-view__stamp-warning">
                     <AlertTriangle size={12} />
-                    Default Gateway is used
+                    Local bee node is used
                   </span>
                 )}
               </div>

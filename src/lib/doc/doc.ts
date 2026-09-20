@@ -28,6 +28,7 @@ const TAG = 'SwarmDoc'
 const DEBOUNCE_MS = 500
 const DEFAULT_MEMBER_LIST_POLL_INTERVAL_MS = 5000
 const DISCONNECTED_MEMBER_POLL_INTERVAL_MS = 15000
+const REANNOUNCE_COOLDOWN_MS = 30000
 const MIN_TTL_WARN_DAYS = 2
 
 export class SwarmDoc implements ISwarmDoc {
@@ -41,6 +42,8 @@ export class SwarmDoc implements ISwarmDoc {
   private sessionId: string
   private username: string
   private ownIndex: bigint = -1n
+  private ownIndexResolved = false
+  private lastReannounceAt = 0
   private docFeedId: string
   private docTopic: string
   private transport: DocTransport
@@ -230,16 +233,22 @@ export class SwarmDoc implements ISwarmDoc {
 
   private async publishSnapshot(capturedUpdates: Uint8Array[]): Promise<void> {
     try {
+      // Retried here rather than only at init, so a node that was unreachable at startup does not
+      // leave the session unable to publish for the rest of its life.
+      await this.ensureOwnIndex()
+
       const snapshot = encode(Y.encodeStateAsUpdate(this.doc))
       const delta = encode(Y.mergeUpdates(capturedUpdates))
 
-      const nextIndex = this.ownIndex === -1n ? 0n : this.ownIndex + 1n
+      const nextIndex = this.ownIndex + 1n
       this.logger.debug(
         `${TAG} publishSnapshot → index: ${nextIndex}, snapshot: ${(snapshot.length * 0.75) | 0}B, delta: ${(delta.length * 0.75) | 0}B`,
       )
 
-      await this.docFeed.write(this.ownFeedTopic(), this.signer, FeedIndex.fromBigInt(nextIndex), snapshot)
+      // Claim the index before the write and keep it claimed if the write throws: a failed upload
+      // may still have stored its chunk, and reusing the index would put a second one at that address.
       this.ownIndex = nextIndex
+      await this.docFeed.write(this.ownFeedTopic(), this.signer, FeedIndex.fromBigInt(nextIndex), snapshot)
 
       const deltaBytes = decode(delta)
       const sig = this.signer.sign(deltaBytes).toHex()
@@ -277,22 +286,51 @@ export class SwarmDoc implements ISwarmDoc {
 
       return
     }
-    await Promise.allSettled([this.initOwnIndex(), this.initMemberList()])
+    const [ownIndex] = await Promise.allSettled([this.initOwnIndex(), this.initMemberList()])
+
+    // Reported rather than swallowed: the document still opens and receives, but nothing it writes
+    // reaches Swarm until the feed position resolves, and a silent read-only session looks like sync.
+    if (ownIndex.status === 'rejected') {
+      this.errorHandler.handleError(ownIndex.reason, `${TAG}.initOwnIndex`)
+      this.emitter.emit(
+        DOC_EVENTS.DOC_ERROR,
+        new Error('Could not read this session’s feed position — edits are not being saved to Swarm yet.'),
+      )
+    }
+
     this.logger.debug(`${TAG} init: done — ownIndex: ${this.ownIndex}`)
 
     this.emitter.emit(DOC_EVENTS.DOC_READY, { memberCount: this.members.all().size })
   }
 
-  private async initOwnIndex(): Promise<void> {
-    const entry = await this.docFeed.readLatestFrom(this.ownFeedTopic(), this.ownAddress, 0n)
-
-    if (!entry) {
+  /*
+   * The tail is probed rather than drained: a session may be re-created against a feed it already
+   * wrote, and resolving the tail short would republish over an existing index, leaving two
+   * payloads at one chunk address that the node can no longer serve. A tail that cannot be
+   * determined blocks publishing instead of defaulting to 0 — guessing here is what corrupts a feed.
+   */
+  private async ensureOwnIndex(): Promise<void> {
+    if (this.ownIndexResolved) {
       return
     }
 
-    this.logger.debug(`${TAG} initOwnIndex: latest index on Swarm = ${entry.index}`)
-    this.ownIndex = entry.index
-    this.applyYjsBytes(entry.snapshot, `own idx=${entry.index}`)
+    this.ownIndex = await this.docFeed.resolveTail(this.ownFeedTopic(), this.ownAddress)
+    this.ownIndexResolved = true
+    this.logger.debug(`${TAG} own feed tail resolved at index ${this.ownIndex}`)
+  }
+
+  private async initOwnIndex(): Promise<void> {
+    await this.ensureOwnIndex()
+
+    if (this.ownIndex < 0n) {
+      return
+    }
+
+    const entry = await this.docFeed.read(this.ownFeedTopic(), this.ownAddress, FeedIndex.fromBigInt(this.ownIndex))
+
+    if (entry) {
+      this.applyYjsBytes(entry.snapshot, `own idx=${this.ownIndex}`)
+    }
   }
 
   private async initMemberList(): Promise<void> {
@@ -417,6 +455,8 @@ export class SwarmDoc implements ISwarmDoc {
       return
     }
 
+    await this.reannounceIfDropped(members)
+
     let changed = false
     for (const [addr, entry] of members) {
       if (addr !== this.ownAddress) {
@@ -436,6 +476,25 @@ export class SwarmDoc implements ISwarmDoc {
     if (changed) {
       this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
     }
+  }
+
+  /*
+   * Every writer republishes the whole member list, so one that merged from a copy it read before
+   * another peer joined silently drops that peer. Each session therefore guards its own entry: a
+   * list that no longer names us is a list our peers are also missing us from, and putting
+   * ourselves back is what makes us discoverable again. The cooldown bounds it to one write per
+   * interval while a read is parked behind an index it cannot get past.
+   */
+  private async reannounceIfDropped(members: ReadonlyMap<string, MemberEntry>): Promise<void> {
+    const own = members.get(this.ownAddress)
+
+    if (own?.live || Date.now() - this.lastReannounceAt < REANNOUNCE_COOLDOWN_MS) {
+      return
+    }
+
+    this.lastReannounceAt = Date.now()
+    this.logger.debug(`${TAG} member list no longer names this session — re-announcing`)
+    await this.members.add(this.ownAddress, this.ownEntry())
   }
 
   private startMemberListPoll(): void {

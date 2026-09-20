@@ -28,6 +28,9 @@ export interface IDocFeed {
    */
   readLatestFrom(topic: Topic, owner: string, fromIndex: bigint): Promise<DocFeedEntry | null>
 
+  /** Highest index present in `owner`'s feed, or `-1n` if it holds nothing yet. */
+  resolveTail(topic: Topic, owner: string): Promise<bigint>
+
   /** Writes a snapshot to `signer`'s own feed at `index`. Throws if the write fails. */
   write(topic: Topic, signer: PrivateKey, index: FeedIndex, snapshot: string): Promise<void>
 }

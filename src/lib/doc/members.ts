@@ -2,13 +2,34 @@ import { Bee, FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
 
 import { IMembers, MemberEntry, PeerConnectionState } from '../interfaces'
 import { getSigner, isNotFoundError } from '../utils/bee'
-import { remove0x, retryAwaitableAsync } from '../utils/common'
-import { MEMBERS_FEED_SUFFIX } from '../utils/constants'
+import { remove0x } from '../utils/common'
+import { DEFERRED_FEED_UPLOAD, MEMBERS_FEED_SUFFIX } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
+import { drainFeed, FeedProbe, FeedRead, resolveFeedTail } from '../utils/feed'
 import { Logger } from '../utils/logger'
 
 const TAG = 'Members'
+const MAX_CONFLICT_RETRIES = 3
 
+/* Structural, so it survives bee-js accessor churn. */
+interface FeedReader {
+  downloadPayload(options?: { index: FeedIndex }): Promise<{ payload: { toUtf8(): string }; feedIndex: FeedIndex }>
+}
+
+/*
+ * Unlike every other feed here, this one has many writers: its key is derived from the room topic,
+ * so each participant holds the same key and appends to the same feed. Two peers writing at once
+ * therefore resolve the same next index and produce two payloads for one chunk address, which the
+ * node can then no longer serve — one simultaneous join or logout is enough.
+ *
+ * So collisions are treated as normal rather than exceptional: writes claim a tail found by probe,
+ * a verify that cannot be read counts as a lost race and retries at the next index, and reads step
+ * over a collided index once a later one proves the feed continues past it. A collision costs one
+ * wasted index; it no longer walls off every entry written afterwards.
+ *
+ * The shared key is also why anyone who knows the topic can rewrite the member list. Replacing it
+ * with per-session feeds plus a discovery mechanism is the real fix, and is not this change.
+ */
 export class Members implements IMembers {
   private readonly bee: Bee
   private readonly signer: PrivateKey
@@ -17,7 +38,11 @@ export class Members implements IMembers {
   private readonly stamp: string
   private readonly errorHandler = ErrorHandler.getInstance()
   private readonly logger = Logger.getInstance()
+  private readonly probe = new FeedProbe()
   private currentIndex: bigint = -1n
+  private indexResolved = false
+  /** Newest list read off the feed, so a write always merges into the freshest one it has seen. */
+  private lastList: Map<string, MemberEntry> = new Map()
   private readonly members: Map<string, MemberEntry> = new Map()
   private readonly indices: Map<string, bigint> = new Map()
   private readonly connStates: Map<string, PeerConnectionState> = new Map()
@@ -75,15 +100,79 @@ export class Members implements IMembers {
     return new Map(this.connStates)
   }
 
+  /**
+   * Returns the newest list written since the last read, or `null` when there is nothing new.
+   *
+   * Reads are by explicit index rather than by asking Bee for the feed's latest update: that
+   * lookup probes with a one-second timeout and counts a slow probe as a miss, so on a loaded node
+   * it reports a head below the real one — long enough for a peer that just joined to go unnoticed.
+   */
   async read(): Promise<Map<string, MemberEntry> | null> {
-    try {
-      const reader = this.bee.feed.makeReader(this.topic, this.address)
-      const result = await reader.downloadPayload()
-      this.currentIndex = result.feedIndex.toBigInt()
+    const reader = this.bee.feed.makeReader(this.topic, this.address)
+    const firstRead = !this.indexResolved
 
-      return Members.parse(result.payload.toUtf8())
+    try {
+      await this.resolveIndex(reader)
     } catch (err) {
-      if (!isNotFoundError(err)) this.errorHandler.handleError(err, `${TAG}.read`)
+      this.errorHandler.handleError(err, `${TAG}.read`)
+
+      return null
+    }
+
+    // The tail itself has not been read yet on the first pass; later passes want what came after it.
+    let from = 0n
+
+    if (this.currentIndex >= 0n) {
+      from = firstRead ? this.currentIndex : this.currentIndex + 1n
+    }
+
+    const { latest, next } = await drainFeed(
+      index => this.readIndex(reader, index),
+      from,
+      this.address,
+      this.probe,
+      TAG,
+    )
+
+    if (latest) {
+      this.lastList = latest
+      this.currentIndex = next - 1n
+    }
+
+    return latest
+  }
+
+  private async readIndex(reader: FeedReader, index: bigint): Promise<FeedRead<Map<string, MemberEntry>>> {
+    try {
+      const result = await reader.downloadPayload({ index: FeedIndex.fromBigInt(index) })
+
+      return { status: 'ok', payload: Members.parse(result.payload.toUtf8()) }
+    } catch (err) {
+      return isNotFoundError(err) ? { status: 'absent' } : { status: 'failed', error: err }
+    }
+  }
+
+  private async resolveIndex(reader: FeedReader): Promise<void> {
+    if (this.indexResolved) return
+
+    this.currentIndex = await resolveFeedTail(
+      () => this.latestIndex(reader),
+      index => this.readIndex(reader, index),
+      TAG,
+    )
+    this.indexResolved = true
+    this.logger.debug(`${TAG} feed tail resolved at index ${this.currentIndex}`)
+  }
+
+  // Bee's own feed lookup. A miss means an empty feed; an error means the lookup itself is
+  // unavailable, and the forward walk from index 0 answers the question without it.
+  private async latestIndex(reader: FeedReader): Promise<bigint | null> {
+    try {
+      return (await reader.downloadPayload()).feedIndex.toBigInt()
+    } catch (err) {
+      if (!isNotFoundError(err)) {
+        this.logger.debug(`${TAG} feed head lookup failed, walking from 0 instead: ${String(err)}`)
+      }
 
       return null
     }
@@ -124,23 +213,12 @@ export class Members implements IMembers {
     const normalizedAddress = remove0x(address.toLowerCase())
     const reader = this.bee.feed.makeReader(this.topic, this.address)
     const writer = this.bee.feed.makeWriter(this.topic, this.signer)
-    const MAX_CONFLICT_RETRIES = 3
+    let members: Map<string, MemberEntry> = new Map()
 
-    for (let attempt = 0; attempt < MAX_CONFLICT_RETRIES; attempt++) {
-      // Always read latest — another peer may have written since our last attempt
-      let members: Map<string, MemberEntry> = new Map()
-      try {
-        const result = await reader.downloadPayload()
-        members = Members.parse(result.payload.toUtf8())
-
-        if (members.size) {
-          this.currentIndex = result.feedIndex.toBigInt()
-        }
-      } catch (err) {
-        if (!isNotFoundError(err)) this.errorHandler.handleError(err, `${TAG}.add read`)
-        // Not found → fresh list, start at index 0
-      }
-
+    for (let attempt = 1; attempt <= MAX_CONFLICT_RETRIES; attempt++) {
+      // Re-read every attempt — another peer may have written since the last one.
+      await this.read()
+      members = new Map(this.lastList)
       const known = members.get(normalizedAddress)
 
       if (known && known.live === entry.live) {
@@ -150,49 +228,49 @@ export class Members implements IMembers {
       }
 
       members.set(normalizedAddress, entry)
-      const nextIndex = this.currentIndex === -1n ? 0n : this.currentIndex + 1n
+
+      const nextIndex = this.currentIndex + 1n
+      // Claim the index before the upload and keep it claimed if the upload throws: a failed write
+      // may still have stored its chunk, and reusing the index would put a second one there.
+      this.currentIndex = nextIndex
 
       try {
         await writer.uploadPayload(this.stamp, JSON.stringify(Object.fromEntries(members)), {
           index: FeedIndex.fromBigInt(nextIndex),
-          deferred: false,
+          deferred: DEFERRED_FEED_UPLOAD,
         })
-        this.currentIndex = nextIndex
       } catch (err) {
         this.errorHandler.handleError(err, `${TAG}.add write`)
 
         return members
       }
 
-      // Verify: read back to confirm own address survived a potential last-write-wins conflict
-      try {
-        const verified = await retryAwaitableAsync(
-          async () => {
-            const r = await reader.downloadPayload({ index: FeedIndex.fromBigInt(nextIndex) })
+      const verified = await this.readIndex(reader, nextIndex)
 
-            return Members.parse(r.payload.toUtf8())
-          },
-          3,
-          500,
-        )
+      if (verified.status === 'ok') {
+        // Whatever is at this index is now the truth — merge onto it, not onto our older copy.
+        this.lastList = verified.payload
 
-        if (verified.has(normalizedAddress)) {
-          this.logger.debug(`${TAG} add: verified — ${Array.from(verified.keys()).join(', ')}`)
+        if (verified.payload.has(normalizedAddress)) {
+          this.logger.debug(`${TAG} add: verified — ${Array.from(verified.payload.keys()).join(', ')}`)
 
-          return verified
+          return verified.payload
         }
-
-        // Own address was overwritten by a simultaneous write — retry with fresh read
-        this.logger.debug(`${TAG} add: conflict on attempt ${attempt + 1}, retrying`)
-      } catch {
-        this.logger.debug(`${TAG} add: verify timed out, using optimistic list`)
-
-        return members
       }
+
+      /*
+       * Two outcomes, one meaning: someone else wrote this index too. An `ok` payload without our
+       * address is their write landing last; a payload that will not read at all is both writes
+       * sitting at one address. Either way the entry did not make it, so try the next index —
+       * treating an unreadable verify as success is what left a session invisible to its peers.
+       */
+      this.logger.debug(
+        `${TAG} add: index ${nextIndex} lost to a concurrent write (${verified.status}), attempt ${attempt}`,
+      )
     }
 
-    this.logger.debug(`${TAG} add: could not confirm own address after ${MAX_CONFLICT_RETRIES} attempts`)
+    this.logger.warn(`${TAG} add: could not confirm own address after ${MAX_CONFLICT_RETRIES} attempts`)
 
-    return (await this.read()) ?? new Map([[normalizedAddress, entry]])
+    return members
   }
 }

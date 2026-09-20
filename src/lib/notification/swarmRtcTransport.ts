@@ -13,9 +13,23 @@ import { assertIceServers } from './validate'
 
 const TAG = 'SwarmRtcTransport'
 const SIGNAL_POLL_INTERVAL_MS = 2_000 // 2 sec — indexed feed reads are a direct chunk lookup
-const OFFER_MAX_AGE_MS = 60 * 1_000 // 1 min — an older SDP no longer completes DTLS reliably
 const PEER_RETRY_TIMEOUT_MS = 5_000 // 5 sec
-const CONNECT_TIMEOUT_MS = 15_000 // 15 sec from applying the SDP to a usable connection
+/*
+ * Time from writing or applying an SDP to a usable connection. It has to cover the peer reading
+ * our half of the handshake off Swarm, not just ICE and DTLS.
+ *
+ * The bound that matters is Bee's, not WebRTC's. Polling an index before the peer writes it makes
+ * retrieval give up on that address and answer instantly for a minute, so the first read of a
+ * freshly written signal index can be delayed by the whole of that window. Anything under it
+ * abandons handshakes that were about to succeed: at 45 s one gave up four seconds before its
+ * answer became readable, and the round was replayed from scratch for nothing.
+ */
+const CONNECT_TIMEOUT_MS = 90_000
+/*
+ * An SDP older than the window its author holds that connection open for is answering a peer that
+ * has already given up on it and will re-offer under a new session id.
+ */
+const OFFER_MAX_AGE_MS = CONNECT_TIMEOUT_MS
 const MAX_CONSECUTIVE_RETRIES = 5
 const CHANNEL_BINARY_TYPE = 'arraybuffer'
 
@@ -60,13 +74,23 @@ class SwarmRtcTransport implements DocTransport {
   }
 
   start(): void {
-    this.swarmSignal.clearOwn()
-    this.startSignalPoll()
+    // Poll only once our own feed is clean, so a peer never answers an offer we already abandoned.
+    this.swarmSignal
+      .clearOwn()
+      .catch(err => this.errorHandler.handleError(err, `${TAG}.start`))
+      .finally(() => {
+        if (!this.stopped) {
+          this.startSignalPoll()
+        }
+      })
+
     this.deps.emitter.emit(DOC_EVENTS.TRANSPORT_READY, true)
   }
 
   stop(): void {
     this.stopped = true
+    // A write landing after stop would collide with the index the next instance resolves.
+    this.swarmSignal.stop()
 
     if (this.signalPollTimer) {
       clearInterval(this.signalPollTimer)
@@ -144,11 +168,13 @@ class SwarmRtcTransport implements DocTransport {
       this.logger.debug(`${TAG} [initiator→${peerAddress.slice(0, 8)}] connectionState=${pc.connectionState}`)
 
       if (pc.connectionState === 'failed') {
+        this.clearConnectWatchdog(peerAddress)
         pc.close()
         this.swarmRtcPeers.delete(peerAddress)
         this.pendingOfferSessions.delete(peerAddress)
         this.scheduleReconnect(peerAddress, 'ICE failed')
       } else if (pc.connectionState === 'closed') {
+        this.clearConnectWatchdog(peerAddress)
         this.swarmRtcPeers.delete(peerAddress)
         this.pendingOfferSessions.delete(peerAddress)
       }
@@ -206,6 +232,12 @@ class SwarmRtcTransport implements DocTransport {
     await this.swarmSignal.writeRecord(record)
 
     this.logger.debug(`${TAG} offer written → ${peerAddress.slice(0, 8)}… sessionId=${sessionId.slice(0, 8)}`)
+    /*
+     * Nothing else bounds the wait for an answer. Without this the connection sits in
+     * `swarmRtcPeers` for the rest of the session, every later attempt reports the peer as already
+     * connected, and an answer that never arrives is indistinguishable from one still in flight.
+     */
+    this.armConnectWatchdog(peerAddress, pc)
   }
 
   private async answerPeerOffer(peerAddress: string, offer: SignalRecord): Promise<void> {
@@ -229,8 +261,11 @@ class SwarmRtcTransport implements DocTransport {
       this.logger.debug(`${TAG} [answerer←${peerAddress.slice(0, 8)}] connectionState=${pc.connectionState}`)
 
       if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        this.clearConnectWatchdog(peerAddress)
         pc.close()
         this.swarmRtcPeers.delete(peerAddress)
+        // The initiator drives retries; drop the answer key so its next offer is answerable.
+        this.sentAnswerKeys.delete(key)
       }
     })
 

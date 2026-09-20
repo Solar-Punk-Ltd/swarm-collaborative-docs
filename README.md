@@ -21,7 +21,7 @@ a core property of the Swarm network and shapes how this library approaches stor
 | **Document snapshot**  | Per-session Swarm feed (`<topic>_doc<sessionAddress>`) | Durable, offline-accessible full state                             |
 | **Delta notification** | Transport-dependent (see below)                        | Fast sync for peers already online                                 |
 | **Member discovery**   | Shared Swarm feed (`<topic>_members`)                  | One approach to a persistent peer list — alternatives are possible |
-| **WebRTC signaling**   | Per-user Swarm feed (`<topic>_signal`)                 | SDP exchange without a dedicated signaling server                  |
+| **WebRTC signaling**   | Per-session Swarm feed (`<topic>_signal`)              | SDP exchange without a dedicated signaling server (SwarmRtc only)  |
 
 ### Document lifecycle
 
@@ -111,21 +111,13 @@ and data paths.
 
 ![SwarmRtc transport](./docs/transport-swarmRtc.svg)
 
-![SwarmPubSub transport](./docs/transport-swarmPubSub.svg)
-
-![yWebrtc transport](./docs/transport-yWebrtc.svg)
+![Signaling server transport](./docs/transport-yWebrtc.svg)
 
 ## Transport data flows
 
 Step-by-step flow comparison for peer discovery, connection setup, doc sync, snapshot persistence, and cursor awareness.
 
-**SwarmRtc vs yWebrtc** — the two recommended transports:
-
-![Transport flows — SwarmRtc vs yWebrtc](./docs/transport-flows.svg)
-
-**SwarmPubSub vs Waku** — the two experimental transports:
-
-![Transport flows — SwarmPubSub vs Waku](./docs/transport-flows-pubsub-waku.svg)
+![Transport flows — SwarmRtc vs signaling server](./docs/transport-flows.svg)
 
 ---
 
@@ -251,6 +243,16 @@ npm install @solarpunkltd/swarm-collaborative-docs yjs
 other's relative positions and types. Your application must provide the single copy both sides share. The same applies
 to `@ethersphere/bee-js`, which the library also keeps external.
 
+`y-webrtc` is an **optional** peer dependency, needed only by `createSignalingServerTransport`. It is loaded through a
+dynamic `import()` at transport start, so an application on `createSwarmRtcTransport` never bundles it:
+
+```bash
+npm install y-webrtc # only if you use createSignalingServerTransport
+```
+
+The package is ESM-first (`"type": "module"`) and ships `.mjs`, `.cjs` and type declarations. Supported toolchains are
+bundlers (`moduleResolution: "bundler"`) and Node ≥ 22.12.
+
 ### `SwarmDoc`
 
 The primary class. Manages a Yjs document backed by Swarm and a pluggable transport.
@@ -267,9 +269,11 @@ const settings: DocSettings = {
   },
   infra: {
     beeUrl: 'http://localhost:1633',
-    stamp: 'your-postage-batch-id',
+    stamp: 'your-postage-batch-id', // required — see Postage stamps
     topic: 'my-document-id', // UUID recommended
-    transport: createSwarmRtcTransport('stun:stun.l.google.com:19302'),
+    transport: createSwarmRtcTransport({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    }),
   },
 }
 
@@ -331,13 +335,18 @@ interface DocSettings {
   }
   infra: {
     beeUrl: string // e.g. 'http://localhost:1633'
-    stamp?: string // postage batch for all Swarm writes
+    stamp: string // required — postage batch for all Swarm writes
     topic: string // shared document identifier
     members?: Map<string, string> // display hints: Map<identity address, username>
-    transport: DocTransportFactory
+    transport: DocTransportFactory // required — no default, pick one explicitly
   }
 }
 ```
+
+`stamp` is validated against the Bee node during `start()`. A missing, unknown, unusable or exhausted batch raises
+`DOC_ERROR` with the reason rather than failing silently at the first write. Every participant writes their own feeds,
+so every participant needs a usable batch on the node their `beeUrl` points at — see
+[Postage stamps and storage lifetime](#postage-stamps-and-storage-lifetime).
 
 #### Sessions
 
@@ -392,6 +401,10 @@ provisioned and managed is left to the application. See
 [Swarm postage stamps](https://docs.ethswarm.org/docs/learn/technology/contracts/postage-stamp) for details on capacity
 and TTL.
 
+The connection mesh is full: with _N_ participants each peer holds _N−1_ data channels and, on SwarmRtc, polls _N−1_
+signal feeds every 2 s against one Bee node. That is comfortable for small groups and has not been tuned beyond them —
+expect to revisit the poll interval before running sessions much larger than a handful of peers.
+
 ### `DOC_EVENTS`
 
 | Event                           | Payload                        | When                                                     |
@@ -424,144 +437,143 @@ rather than guessing at a timeout.
 
 The library exports TypeScript interfaces for each major class, useful for testing and dependency injection:
 
-| Interface      | Implemented by | Description                                 |
-| -------------- | -------------- | ------------------------------------------- |
-| `ISwarmDoc`    | `SwarmDoc`     | Public API of the collaborative doc session |
-| `IMembers`     | `Members`      | Peer set management and consensus feed      |
-| `ISwarmSignal` | `SwarmSignal`  | WebRTC signaling feed reads and writes      |
+| Interface   | Implemented by | Description                                 |
+| ----------- | -------------- | ------------------------------------------- |
+| `ISwarmDoc` | `SwarmDoc`     | Public API of the collaborative doc session |
+| `IMembers`  | `Members`      | Peer set management and consensus feed      |
+
+### Exported surface
+
+The entry point is deliberately small — everything below is public API, and nothing else is reachable:
+
+**Values** — `SwarmDoc`, `DOC_EVENTS`, `PeerConnectionState`, `createSwarmRtcTransport`,
+`createSignalingServerTransport`, `validateStamps`, `uuidV4`.
+
+**Types** — `DocSettings`, `SwarmRtcOptions`, `SignalingServerOptions`, `DocTransport`, `DocTransportDeps`,
+`DocTransportFactory`, `ISwarmDoc`, `IMembers`, `MemberEntry`, `CursorPosition`, `NotificationPayload`,
+`NotificationHandler`, `JoinPayload`, `DocPayload`, `CursorPayload`, `LeavePayload`.
+
+Internals (`DocFeed`, `Members`, `SwarmSignal`, key derivation helpers) are not exported: they are implementation detail
+and their signatures change without a major bump.
 
 ---
 
 ## Transports
 
-Each transport implements `DocTransport` and is passed to `DocSettings.infra.transport` as a factory function. All
-transports fall back to Swarm snapshot reads for document history recovery regardless of notification delivery
-guarantees.
+Two transports are shipped. Each implements `DocTransport` and is passed to `DocSettings.infra.transport` as a factory.
+Both fall back to Swarm snapshot reads for document history recovery, so a peer that was offline still converges.
 
-### `createSwarmPubSubTransport`
-
-> ⚠️ **Experimental** — this transport depends on GSOC ephemeral pubsub, a feature currently available only on a
-> development branch of Bee. It is not yet part of a stable Bee release. Expect breaking changes and do not use in
-> production.
-
-**Best for**: low-latency real-time notifications over Swarm with no external signaling server, once the underlying Bee
-feature is released.
-
-Uses Swarm's GSOC ephemeral pubsub via the Bee node WebSocket endpoint. All peers on the same document topic connect to
-the same GSOC address, derived deterministically from the `docFeedId`. Publish calls are buffered during connection and
-drained on open. Reconnects automatically after an unexpected WebSocket close.
-
-```typescript
-transport: createSwarmPubSubTransport('/ip4/1.2.3.4/tcp/1634/p2p/QmXxxx…')
-```
-
-The argument is the multiaddress of a Bee node acting as the GSOC broker. Peer discovery happens via the consensus Swarm
-feed and incoming `join` notifications, not at the transport level.
-
-**Delivery**: bidirectional WebSocket push. Messages are ephemeral — offline peers rely on Swarm snapshots.
-
-**Status**: requires a Bee build from the `feat/pubsub` development branch. Not compatible with released Bee versions.
-
----
+**There is no default transport and no default server.** Both factories take an options object and throw immediately if
+a required field is missing or carries the wrong URL scheme — a `stun:` URL passed as `signalingUrl`, or a `ws://` URL
+passed in `iceServers`, is rejected at construction with a message saying which field it belongs in. Connectivity is
+always a deliberate choice, never an inherited default that silently points at a server nobody runs.
 
 ### `createSwarmRtcTransport` ✓ recommended
 
-**Best for**: fully decentralised peer-to-peer sync without any external server. This is the recommended transport for
-all current use.
+**Best for**: fully decentralised peer-to-peer sync with no server to operate beyond a Bee node.
 
-SDP offer/answer records are written to and read from each peer's `<topic>_signal` Swarm feed, replacing the traditional
-signaling server. Role assignment is deterministic (lower Ethereum address = initiator) to avoid duplicate connections.
-On ICE failure the initiator retries automatically.
+SDP offer/answer records are written to and read from each session's `<topic>_signal` Swarm feed, replacing the
+signaling server. Role assignment is deterministic (lower session address = initiator) to avoid duplicate connections.
+On ICE failure the initiator retries, giving up after a bounded number of attempts so a reloaded session is not dialled
+forever.
 
-Yjs binary updates and JSON `NotificationPayload` messages (including cursor) share the same WebRTC DataChannel,
-distinguished by message type: binary frames are Yjs updates, string frames are JSON payloads.
-
-```typescript
-transport: createSwarmRtcTransport('stun:stun.l.google.com:19302' /* , iceServers? */)
-```
-
-The second argument is a full `RTCIceServer[]` and replaces the default STUN pair when given — this is where a TURN
-relay goes, which is what gets peers connected through the symmetric NATs where STUN alone fails:
+Yjs binary updates and JSON `NotificationPayload` messages (including cursor) share the same WebRTC DataChannel: binary
+frames are Yjs updates, string frames are JSON payloads.
 
 ```typescript
-transport: createSwarmRtcTransport('', [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'turn:turn.example.com:3478', username: '…', credential: '…' },
-])
+import { createSwarmRtcTransport } from '@solarpunkltd/swarm-collaborative-docs'
+
+transport: createSwarmRtcTransport({
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'turn:turn.example.com:3478', username: '…', credential: '…' },
+  ],
+})
 ```
+
+| Option       | Type             | Required | Notes                                                                                        |
+| ------------ | ---------------- | :------: | -------------------------------------------------------------------------------------------- |
+| `iceServers` | `RTCIceServer[]` |    ✓     | STUN suffices when one side is directly reachable; symmetric NAT needs TURN with credentials |
 
 When a data channel opens, the two sides exchange Yjs state vectors and reply with only the updates the other lacks,
 rather than each pushing its whole document. Losing one direction of that exchange is self-correcting.
 
-**Delivery**: WebRTC DataChannel (peer-to-peer). Requires a Bee node for signaling feed reads/writes.
+**Delivery**: WebRTC DataChannel (peer-to-peer). Requires a Bee node for signaling feed reads and writes. Needs no extra
+npm package.
 
 ---
 
-### `createYWebrtcTransport`
+### `createSignalingServerTransport`
 
-**Best for**: low-latency sync in environments where an external WebSocket signaling server is available.
+**Best for**: lower connection-setup latency when you already operate a WebSocket server.
 
-Uses the [y-webrtc](https://github.com/yjs/y-webrtc) library. Peers are discovered via the `Y.Awareness` protocol
-through a WebSocket signaling server. Yjs state is synchronised over WebRTC data channels managed by the library.
-Cross-tab sync within the same origin is handled automatically via BroadcastChannel.
+Uses [y-webrtc](https://github.com/yjs/y-webrtc). Peers are discovered through the `Y.Awareness` protocol over a
+signaling server **you run** — the signaling server only relays SDP and ICE candidates, no document data. Yjs state is
+synchronised over WebRTC data channels managed by y-webrtc, and cross-tab sync within one origin is handled
+automatically via BroadcastChannel.
 
-Cursor state is bridged into the library's `DOC_EVENTS.AWARENESS_UPDATED` event via the awareness `change` handler —
-`publish(CursorPayload)` sets `awareness.setLocalStateField('cursor', ...)` and incoming awareness changes are forwarded
-to the notification handler as `CursorPayload`.
-
-```typescript
-transport: createYWebrtcTransport('wss://your-signaling-server.example' /* , iceServers? */)
-```
-
-**Delivery**: WebRTC data channels. Does not require a Bee node for signaling.
-
----
-
-### `createWakuTransport`
-
-> ⚠️ **Not recommended for production** — this transport depends on the public Waku sandbox network, which has no
-> reliability guarantees. Message delivery is inconsistent and bootstrap peer availability is not guaranteed. Consider
-> this transport experimental until dedicated infrastructure or a stable Waku fleet can be provided.
-
-**Best for**: decentralised real-time notifications without a Bee node dependency, in development or research contexts.
-
-Connects to the [Waku](https://waku.org) network via a libp2p light node using LightPush (send) and Filter (receive)
-protocols. Payloads are JSON `NotificationPayload` objects. Node initialisation is asynchronous; calls made before the
-node is ready are buffered and drained automatically once both the node is healthy and the filter subscription is
-confirmed.
+Cursor state is bridged into `DOC_EVENTS.AWARENESS_UPDATED`: `publish(CursorPayload)` sets
+`awareness.setLocalStateField('cursor', …)`, and incoming awareness changes are forwarded to the notification handler as
+`CursorPayload`.
 
 ```typescript
-transport: createWakuTransport() // Waku default bootstrap
-transport: createWakuTransport(['/ip4/...']) // explicit bootstrap peers
+import { createSignalingServerTransport } from '@solarpunkltd/swarm-collaborative-docs'
+
+transport: createSignalingServerTransport({
+  signalingUrl: 'wss://your-app.example/collab-signal',
+  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+})
 ```
 
-**Delivery**: gossipsub pub/sub over the Waku network. Messages are ephemeral.
+| Option         | Type             | Required | Notes                                                          |
+| -------------- | ---------------- | :------: | -------------------------------------------------------------- |
+| `signalingUrl` | `string`         |    ✓     | `ws://` or `wss://` URL of a y-webrtc signaling server you run |
+| `iceServers`   | `RTCIceServer[]` |    ✓     | Same as above                                                  |
+
+Run the signaling server yourself — y-webrtc ships one (`npx y-webrtc-signaling`, or the `bin/server.js` in its
+repository), and it is a few lines to mount inside an existing WebSocket server. There is no public default: pointing at
+a server that does not exist is the single most common way a session appears to start and then never connects.
+
+`y-webrtc` must be installed. It is resolved by dynamic `import()` on `start()`, so a missing package surfaces as a
+`DOC_ERROR` telling you to install it or switch transport, rather than breaking your build.
+
+**Delivery**: WebRTC data channels. Does not require a Bee node for signaling, but still uses one for snapshots and the
+member list.
 
 ---
 
 ## Transport comparison
 
-|                      | SwarmRtc ✓ | yWebrtc | SwarmPubSub ⚠️ | Waku ⚠️ |
-| -------------------- | :--------: | :-----: | :------------: | :-----: |
-| No external server   |     ✓      |    ✗    |       ✓        |    ✓    |
-| Requires Bee node    |     ✓      |    ✗    |       ✓        |    ✗    |
-| Requires broker peer |     ✗      |    ✗    |       ✓        |    ✗    |
-| Cursor awareness     |     ✓      |    ✓    |       ✓        |    ✓    |
-| Cross-device         |     ✓      |    ✓    |       ✓        |    ✓    |
-| Offline recovery     |    ✓\*     |   ✓\*   |      ✓\*       |   ✓\*   |
-| Production ready     |     ✓      |    ✓    |       ✗        |    ✗    |
+|                          | SwarmRtc ✓ | Signaling server |
+| ------------------------ | :--------: | :--------------: |
+| No server to operate     |     ✓      |        ✗         |
+| Requires Bee node        |     ✓      |   for storage    |
+| Requires STUN/TURN       |     ✓      |        ✓         |
+| Extra npm package        |     ✗      |    `y-webrtc`    |
+| Connection setup latency |  seconds   |    sub-second    |
+| Cursor awareness         |     ✓      |        ✓         |
+| Offline recovery         |    ✓\*     |       ✓\*        |
 
-\*via Swarm snapshot reads — all transports share the same persistence layer regardless of notification delivery.
+\*via Swarm snapshot reads — both transports share the same persistence layer regardless of notification delivery.
 
-**SwarmRtc** is the default and recommended transport. It requires only a standard released Bee node and no external
-infrastructure beyond a STUN server.
+Pick **SwarmRtc** unless you already run a WebSocket server and need the faster handshake; pick **SignalingServer** when
+you do.
 
-**SwarmPubSub** requires a Bee build from a development branch and a bee-js build that exposes GSOC pubsub; neither is
-part of a stable release yet. The transport detects this at connect time and emits `DOC_ERROR` when the installed bee-js
-has no pubsub support, so it fails loudly rather than hanging. The API may change before release.
+---
 
-**Waku** is functional but delivery reliability depends on the public Waku sandbox network. Not recommended for
-production without dedicated bootstrap peers.
+## Unshipped transports
+
+`src/experimental/` holds two further transports as reference implementations. They are **not exported, not built and
+not supported** — no entry point reaches them, and their dependencies are not declared:
+
+- **`swarmPubSubTransport.ts`** — Swarm GSOC ephemeral pubsub over the Bee WebSocket endpoint. Needs a Bee build from a
+  development branch and a bee-js exposing `pubsubConnect`; neither is in a stable release.
+- **`wakuTransport.ts`** — [Waku](https://waku.org) light node via LightPush and Filter. Works, but delivery depends on
+  the public Waku sandbox network and has had no reliability work.
+
+Both are written against the same `DocTransport` interface, so they are a starting point if you want to add a transport
+of your own. Copy the file into your project and declare the dependency there — do not expect the library to keep them
+compiling.
 
 ---
 
@@ -580,7 +592,7 @@ are submitted.
 
 The transport choice is constrained by what the hosting application can provide:
 
-**`createYWebrtcTransport` — recommended for gateway-hosted apps**
+**`createSignalingServerTransport` — recommended for gateway-hosted apps**
 
 When the hosting application already runs a WebSocket server (as Remix does for its backend services), that server can
 trivially host a [y-webrtc signaling endpoint](https://github.com/yjs/y-webrtc#signaling). This requires adding a single
@@ -589,7 +601,10 @@ SDP and ICE candidates; no document data passes through it.
 
 ```typescript
 // the app's existing backend serves the signaling endpoint
-transport: createYWebrtcTransport('wss://your-app.example/collab-signal')
+transport: createSignalingServerTransport({
+  signalingUrl: 'wss://your-app.example/collab-signal',
+  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+})
 ```
 
 Peer-to-peer WebRTC data channels are established after signaling, so document content and cursor data flow directly
@@ -603,7 +618,7 @@ the gateway Bee node. No additional server is required. The trade-off is higher 
 WebSocket signaling server, since SDP negotiation goes through Swarm feed reads and writes.
 
 ```typescript
-transport: createSwarmRtcTransport('stun:stun.l.google.com:19302')
+transport: createSwarmRtcTransport({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
 ```
 
 ### Gateway deployment architecture
@@ -622,10 +637,21 @@ Browser (user)
                  Remote peer browser
 ```
 
-The Bee gateway only needs read access for most peers (fetching member lists and snapshots). Write access (for
-publishing snapshots and signal feeds) requires a postage stamp — either the app provisions a shared stamp for all
-users, each user provides their own, or another provisioning model is used. See the
-[Swarm storage design](#swarm-storage-design) section for the trade-offs.
+Every peer writes — its own snapshot feed, and its signal feed on SwarmRtc — so every peer needs a usable postage stamp
+on the node its `beeUrl` names. There is no read-only participant mode. Either the app provisions a shared stamp for all
+users, or each user brings their own; see [Swarm storage design](#swarm-storage-design) for the trade-offs.
+
+### Serving over HTTPS
+
+A page served over `https://` cannot make requests to an `http://` Bee node — the browser blocks them as **mixed
+content** before any CORS header is consulted, so a permissive `Access-Control-Allow-Origin: *` on the node changes
+nothing. `http://127.0.0.1:1633` and `http://localhost:1633` are the exception: browsers treat loopback as a
+potentially-trustworthy origin and allow it, which is why a local Bee node works from an HTTPS page and a remote one
+does not.
+
+Point `beeUrl` at an `https://` endpoint: terminate TLS in front of the Bee node (a reverse proxy with a certificate is
+enough) and let that proxy set the CORS headers. A `net::ERR_BLOCKED_BY_CLIENT`-style failure with a working `curl` from
+the same machine is nearly always this and not a CORS misconfiguration.
 
 ---
 
@@ -674,10 +700,10 @@ The app runs at `http://localhost:5002`.
 
 - **Document ID** — UUID identifying the shared document, auto-generated and persisted in `localStorage`. An invite link
   (`?doc=<id>&trans=<transport>`) pre-fills this field.
-- **Transport tabs** — select the active notification transport: Swarm PubSub, Waku, or WebRTC (y-webrtc or
-  Swarm-based).
-- **Advanced settings** (collapsible) — Bee API URL, postage batch ID, broker peer multiaddress (PubSub), signaling
-  server URL (WebRTC).
+- **Transport tabs** — Swarm-signalled WebRTC or signaling server.
+- **Advanced settings** (collapsible) — STUN/TURN server URL, signaling server URL (signaling-server transport only),
+  Bee API URL, postage batch ID. The STUN/TURN URL and the postage batch are required; the login form refuses to
+  continue without them.
 
 ### Session screen
 
