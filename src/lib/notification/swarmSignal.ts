@@ -14,7 +14,7 @@ const TAG = 'SwarmSignal'
  * that expires before it is read. Kept close to the poll interval for that reason.
  */
 const SIGNAL_PROBE_BACKOFF_MS = [2_000, 4_000, 8_000]
-
+// TODO: why is this no imported FeedReader from bee-js?
 /*
  * Structural, so it survives bee-js accessor churn. Peer reads are always by explicit index: an
  * unindexed download runs Bee's feed search, whose probes give up after one second each and count

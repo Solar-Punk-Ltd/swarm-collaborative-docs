@@ -1,5 +1,6 @@
 import { FeedIndex } from '@ethersphere/bee-js'
 
+// TODO: export API_VERSION for clients if they need it
 export const API_VERSION = 'v1'
 export const FEED_INDEX_ZERO = FeedIndex.fromBigInt(0n)
 /** Feed ID suffix for per-user document snapshot feeds: `<topic>_doc<address>`. */

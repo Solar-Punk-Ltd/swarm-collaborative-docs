@@ -36,10 +36,12 @@ interface FeedReader {
  * a peer that merged from a list read before someone joined silently deleted them.
  *
  * Now each identity owns one announce feed holding its own sessions and writes nothing else into
- * it. Losing another member's entry is not possible, because no writer ever holds another member's
- * entry.
+ * it. The feed is owned and signed by the identity itself, not by a key derived from the room
+ * secret, so a member is not merely expected to stay out of another's feed — Swarm's single-owner
+ * rule means it cannot write one. Losing another member's entry is impossible, and so is
+ * publishing sessions in their name.
  *
- * One shared feed remains, and it has to: an announce feed is addressed from its identity, so a
+ * One shared feed remains, and it has to: an announce feed is addressed from its identity, so an
  * identity nobody has heard of has no address anyone could poll, and a member already in the room
  * would never learn that someone new arrived. The directory feed carries that and only that — an
  * append-only log naming identities. Its entries are never rewritten, so a lost race costs an
@@ -47,10 +49,14 @@ interface FeedReader {
  * wrong before. Announce payloads repeat the identities their writer knows, giving a second path
  * to the same information when a directory index is stuck behind a failed read.
  *
- * Two tabs of one identity share a identity and therefore an announce feed, so they can still
- * collide. That is contained rather than solved: the payload at stake is that identity's own
- * session list, the loser adopts whatever the winner wrote and retries at the next index, and the
- * tabs republish continuously. A per-browser writer election would remove it entirely.
+ * What the directory cannot do is tell a real identity from an invented one: any key holder may
+ * append. A junk entry costs readers a feed that never answers, and is filtered only by never
+ * yielding a readable announce payload.
+ *
+ * Two tabs of one identity share an announce feed, so they can still collide. That is contained
+ * rather than solved: the payload at stake is that identity's own session list, the loser adopts
+ * whatever the winner wrote and retries at the next index, and the tabs republish continuously.
+ * A per-browser writer election would remove it entirely.
  */
 export class Members implements IMembers {
   private readonly bee: Bee
@@ -89,12 +95,16 @@ export class Members implements IMembers {
   private readonly indices: Map<string, bigint> = new Map()
   private readonly connStates: Map<string, PeerConnectionState> = new Map()
 
-  constructor(room: Room, identity: string, beeUrl: string, stamp: string) {
+  /**
+   * @param identitySigner The user's own identity key. It signs this identity's announce feed, so
+   * only the holder of the key can publish sessions under that identity.
+   */
+  constructor(room: Room, identitySigner: PrivateKey, beeUrl: string, stamp: string) {
     this.room = room
-    this.identity = remove0x(identity.toLowerCase())
+    this.identity = remove0x(identitySigner.publicKey().address().toString().toLowerCase())
     this.topic = Topic.fromString(room.namespace + MEMBERS_FEED_SUFFIX)
-    this.ownSigner = room.announceSigner(this.identity)
-    this.ownOwner = this.ownSigner.publicKey().address().toString()
+    this.ownSigner = identitySigner
+    this.ownOwner = room.announceOwner(this.identity)
     this.directorySigner = room.directorySigner()
     this.directoryAddress = room.directoryOwner()
     this.bee = new Bee(beeUrl)
@@ -250,7 +260,7 @@ export class Members implements IMembers {
 
   /*
    * Adds anything known but not listed, which is both this session's own first join and a repair:
-   * a identity learnt from another member's `known` list but missing from the directory would
+   * an identity learnt from another member's `known` list but missing from the directory would
    * otherwise stay invisible to everyone who has only ever read the directory. The own-identity
    * case is not rate limited, because it is the join path and a member nobody can see is useless.
    */
@@ -358,6 +368,12 @@ export class Members implements IMembers {
     )
 
     this.peerNextIndexes.set(identity, next)
+
+    if (latest && remove0x(latest.identity.toLowerCase()) !== identity) {
+      this.logger.debug(`${TAG} announce(${identity.slice(0, 8)}…) claims a different identity — ignored`)
+
+      return null
+    }
 
     return latest
   }

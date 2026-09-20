@@ -33,8 +33,8 @@ export interface MemberEntry {
  * Everything one identity publishes about a room, written to that identity's announce feed.
  *
  * Each entry replaces the last, so only the newest index matters. `known` is what makes discovery
- * work without a shared feed: announce feeds are addressed per identity, so a reader that learns
- * a identity can derive its feed and read it, and following `known` outward from the room's
+ * work without a shared feed: an announce feed is owned by its identity, so a reader that learns
+ * an identity can address its feed and read it, and following `known` outward from the room's
  * creator reaches everyone the room has seen.
  */
 export interface AnnouncePayload {
@@ -68,10 +68,12 @@ export interface DirectoryPayload {
  * Two layers of state:
  * - **Local session** — in-memory set of registered peer addresses and their last known feed index.
  * - **Swarm discovery** — a directory feed listing the room's identities, plus one announce feed
- *   per identity, each with a single writer, holding that identity's sessions.
+ *   per identity, owned and signed by that identity, holding its sessions.
  *
- * Every signing key here derives from the room secret, so knowing a room's public identifier
- * grants nothing — only an invite link does.
+ * Feed topics derive from the room secret, so knowing a room's public identifier grants nothing —
+ * only an invite link does. The directory's signing key derives from the secret too, since every
+ * member must be able to append to it; announce feeds are signed by their identity, so the secret
+ * alone does not let a member write in another's name.
  */
 export interface IMembers {
   /** Adds a session to the local peer set. Returns `true` if newly added, `false` if already present. */

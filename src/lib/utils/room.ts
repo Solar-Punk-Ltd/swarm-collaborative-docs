@@ -11,11 +11,16 @@ import { remove0x, uuidV4 } from './common'
  * room instead — deriving its feed keys from a topic, as this did before — makes the name the
  * credential, so anyone who learns it can rewrite the room.
  *
- * Every feed key derives from the secret, so an invite carries nothing that can go stale. The one
- * exception is `creator`: announce feeds are addressed per identity, and a joiner holding only
+ * Every feed address derives from the secret, so an invite carries nothing that can go stale. The
+ * one exception is `creator`: announce feeds are owned by their identity, and a joiner holding only
  * the key would have no identity to start from until it has read the directory feed.
+ *
+ * The secret derives every feed *topic*, but not every signing key. The directory is signed with a
+ * key derived from the secret, because every member has to be able to append to it. An announce
+ * feed is signed by the identity that owns it, so the secret alone does not let a member write in
+ * someone else's name.
  */
-
+// TODO: export scheme for clients if they need it
 const SCHEME = 'swarmdoc:v1'
 const INVITE_VERSION = '1'
 const DISPLAY_ID_CHARS = 32
@@ -59,26 +64,23 @@ export class Room {
   }
 
   /**
-   * Signing key for a identity's announce feed.
+   * Owner address of an identity's announce feed, which is what a reader needs.
    *
-   * One writer per identity, so an announce feed never has to merge with anyone else's write —
-   * the loss of other members' entries that the shared roster feed suffered is structurally
-   * impossible here.
+   * The identity *is* the owner: an announce feed is signed by the identity key, so Swarm's
+   * single-owner rule is what keeps one writer per feed, rather than everyone agreeing to stay out
+   * of each other's. Holding the room key no longer lets a member publish sessions in someone
+   * else's name. The topic still derives from the secret, so the chunk addresses stay unguessable
+   * from an identity address alone.
    */
-  announceSigner(identity: string): PrivateKey {
-    return getSigner(`${SCHEME}:ann:${this.secret}:${remove0x(identity.toLowerCase())}`)
-  }
-
-  /** Owner address of a identity's announce feed, which is what a reader needs. */
   announceOwner(identity: string): string {
-    return this.announceSigner(identity).publicKey().address().toString()
+    return remove0x(identity.toLowerCase())
   }
 
   /**
    * Signing key for the room's directory feed — the one feed every member may write.
    *
    * It exists because nothing else lets a member already in the room learn that someone new has
-   * arrived: announce feeds are addressed from a identity, and a identity nobody has heard of
+   * arrived: announce feeds are addressed from an identity, and an identity nobody has heard of
    * has no derivable address. Entries only ever name identities and are never rewritten, so a
    * simultaneous write costs one index and a retry instead of deleting what was already there.
    */

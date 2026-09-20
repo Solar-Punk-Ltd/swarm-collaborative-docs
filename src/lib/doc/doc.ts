@@ -98,7 +98,7 @@ export class SwarmDoc implements ISwarmDoc {
     this.docFeedId = this.room.namespace + DOC_FEED_SUFFIX
     this.docTopic = Topic.fromString(this.docFeedId).toString()
 
-    this.members = new Members(this.room, this.identityAddress, this.beeApiUrl, this.stampId)
+    this.members = new Members(this.room, this.identitySigner, this.beeApiUrl, this.stampId)
     this.docFeed = new DocFeed(this.beeApiUrl, this.stampId)
 
     this.nameHints = new Map(
