@@ -1,5 +1,5 @@
 import { Doc, Text } from 'yjs'
-
+// TODO: this needs to be probably client supplied per file
 export const SEED = 'content'
 
 export const commonPrefixLen = (a: string, b: string): number => {

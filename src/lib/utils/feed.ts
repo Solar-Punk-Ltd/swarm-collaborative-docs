@@ -38,6 +38,15 @@ const MAX_TAIL_CONFIRM_STEPS = 64
  */
 const DEFAULT_PROBE_BACKOFF_MS = [5_000, 15_000, 30_000]
 /*
+ * An index that reads 404 needs spacing of its own. Nothing is wrong with it — it is simply not
+ * written yet — but asking again at the caller's poll rate is precisely what breaks it: every miss
+ * puts one more retrieval peer on the skip list, and once they are all on it the address answers
+ * 500 for about a minute. For an index somebody is about to write, that minute covers the moment
+ * the entry lands. Shorter than the failure schedule, since a reader parked here is usually
+ * waiting for that entry.
+ */
+const DEFAULT_ABSENT_BACKOFF_MS = [2_000, 6_000, 12_000]
+/*
  * Attempts before a drain spends an extra read proving that an index is stuck. The lookahead is
  * itself a read of a probably-absent chunk, so it is worth burning only once the index has failed
  * more than transiently.
@@ -48,14 +57,23 @@ function probeKey(owner: string, index: bigint): string {
   return `${owner}:${index}`
 }
 
-/** Tracks which indices failed to read and when each is worth asking about again. */
+/** Why an index did not yield a payload. Each is spaced on its own schedule. */
+export type ProbeMiss = 'failed' | 'absent'
+
+/** Tracks which indices did not read and when each is worth asking about again. */
 export class FeedProbe {
   private readonly attempts = new Map<string, number>()
+  private readonly absentAttempts = new Map<string, number>()
   private readonly retryAfter = new Map<string, number>()
   private readonly backoffMs: readonly number[]
+  private readonly absentBackoffMs: readonly number[]
 
-  constructor(backoffMs: readonly number[] = DEFAULT_PROBE_BACKOFF_MS) {
+  constructor(
+    backoffMs: readonly number[] = DEFAULT_PROBE_BACKOFF_MS,
+    absentBackoffMs: readonly number[] = DEFAULT_ABSENT_BACKOFF_MS,
+  ) {
     this.backoffMs = backoffMs
+    this.absentBackoffMs = absentBackoffMs
   }
 
   ready(owner: string, index: bigint): boolean {
@@ -64,13 +82,19 @@ export class FeedProbe {
     return at === undefined || Date.now() >= at
   }
 
-  /** Records a failure and returns how long this index is left alone for. */
-  defer(owner: string, index: bigint): { attempts: number; waitMs: number } {
+  /*
+   * Records a miss and returns how long this index is left alone for. The two kinds are counted
+   * apart: only a failure carries any suggestion that the index is stuck, so only its count may
+   * decide that a drain should spend a read looking past it.
+   */
+  defer(owner: string, index: bigint, miss: ProbeMiss = 'failed'): { attempts: number; waitMs: number } {
     const key = probeKey(owner, index)
-    const attempts = (this.attempts.get(key) ?? 0) + 1
-    const waitMs = this.backoffMs[Math.min(attempts - 1, this.backoffMs.length - 1)]
+    const counts = miss === 'absent' ? this.absentAttempts : this.attempts
+    const schedule = miss === 'absent' ? this.absentBackoffMs : this.backoffMs
+    const attempts = (counts.get(key) ?? 0) + 1
+    const waitMs = schedule[Math.min(attempts - 1, schedule.length - 1)]
 
-    this.attempts.set(key, attempts)
+    counts.set(key, attempts)
     this.retryAfter.set(key, Date.now() + waitMs)
 
     return { attempts, waitMs }
@@ -80,6 +104,7 @@ export class FeedProbe {
     const key = probeKey(owner, index)
 
     this.attempts.delete(key)
+    this.absentAttempts.delete(key)
     this.retryAfter.delete(key)
   }
 }
@@ -87,9 +112,12 @@ export class FeedProbe {
 /**
  * Reads forward from `from` and returns the newest payload found, with the index to resume at.
  *
- * Every feed here carries its full state in each entry, so only the newest readable one matters.
+ * Most feeds here carry their full state in each entry, so only the newest readable one matters.
  * `next` moves only over indices that were actually read, which is what keeps a reader parked in
  * front of an index a peer has not written yet instead of marching past it.
+ *
+ * @param onEntry Called for every entry read, for the append-only feeds whose older entries still
+ * carry information the newest one does not repeat.
  */
 export async function drainFeed<T>(
   read: (index: bigint) => Promise<FeedRead<T>>,
@@ -97,6 +125,7 @@ export async function drainFeed<T>(
   owner: string,
   probe: FeedProbe,
   label: string,
+  onEntry?: (payload: T, index: bigint) => void,
 ): Promise<{ latest: T | null; next: bigint }> {
   let next = from < 0n ? 0n : from
   let latest: T | null = null
@@ -106,10 +135,15 @@ export async function drainFeed<T>(
 
     const result = await read(next)
 
-    if (result.status === 'absent') break
+    if (result.status === 'absent') {
+      probe.defer(owner, next, 'absent')
+
+      break
+    }
 
     if (result.status === 'ok') {
       probe.clear(owner, next)
+      onEntry?.(result.payload, next)
       latest = result.payload
       next += 1n
     } else {
@@ -130,6 +164,7 @@ export async function drainFeed<T>(
       logger.warn(`${label} index ${next} unreadable but index ${next + 1n} reads — skipping it`)
       probe.clear(owner, next)
       probe.clear(owner, next + 1n)
+      onEntry?.(beyond.payload, next + 1n)
       latest = beyond.payload
       next += 2n
     }

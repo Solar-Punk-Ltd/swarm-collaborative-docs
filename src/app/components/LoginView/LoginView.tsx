@@ -1,4 +1,4 @@
-import { uuidV4, validateStamps } from 'lib'
+import { createRoomKey, Room, validateStamps } from 'lib'
 import { AlertCircle, AlertTriangle, FileText, LogIn } from 'lucide-react'
 import React, { useCallback, useState } from 'react'
 
@@ -7,16 +7,15 @@ import {
   DEFAULT_BEE_API_URL,
   DEFAULT_ICE_SERVER_URL,
   DEFAULT_SIGNALING_SERVER_URL,
-  DEFAULT_TOPIC,
   DOCTYPE_KEY,
-  SESSION_KEY,
+  ROOM_CREATOR_KEY,
+  ROOM_KEY_KEY,
   SIGNALING_URL_KEY,
   STAMP_KEY,
   STUN_URL_KEY,
-  TOPIC_KEY,
   TRANSPORT_KEY,
 } from '../../utils/constants'
-import { loadDocType, loadSession, loadSignalingUrl, loadStunUrl, loadTransport } from '../../utils/localStorage'
+import { loadDocType, loadSignalingUrl, loadStunUrl, loadTransport } from '../../utils/localStorage'
 import { DocType, DOCTYPE_LABELS, SessionOpts, Transport, TRANSPORT_LABELS } from '../../utils/types'
 import { buildInviteLink } from '../../utils/url'
 
@@ -28,10 +27,11 @@ interface LoginViewProps {
   username?: string
   beeUrl: string
   stamp: string
-  topic: string
+  roomKey: string
+  identity: string
   onBeeUrlChange: (url: string) => void
   onStampChange: (v: string) => void
-  onTopicChange: (v: string) => void
+  onRoomChange: (key: string, creator: string) => void
   onLogin: (opts: SessionOpts) => void
 }
 
@@ -42,10 +42,11 @@ export const LoginView: React.FC<LoginViewProps> = ({
   username,
   beeUrl,
   stamp,
-  topic,
+  roomKey,
+  identity,
   onBeeUrlChange,
   onStampChange,
-  onTopicChange,
+  onRoomChange,
   onLogin,
 }) => {
   const [inputName, setInputName] = useState(username ?? '')
@@ -69,32 +70,32 @@ export const LoginView: React.FC<LoginViewProps> = ({
     localStorage.setItem(DOCTYPE_KEY, d)
   }
 
+  // The link carries the room secret, so copying it is what grants access — the document id alone
+  // no longer lets anyone in. `identity` rides along because discovery starts from the creator.
   const handleCopyInvite = useCallback(async () => {
     try {
-      const link = buildInviteLink(topic, transport, docType)
+      const link = buildInviteLink({ key: roomKey, creator: identity, transport, docType })
       await navigator.clipboard.writeText(link)
       setCopied(true)
       setTimeout(() => setCopied(false), BUTTON_TIMEOUT_MS)
     } catch {
       // ignore
     }
-  }, [topic, transport, docType])
+  }, [roomKey, identity, transport, docType])
 
+  // A new document is a new room key. Whoever mints it is its creator, which is what an invite
+  // names so joiners have an announce feed to read before the directory answers.
   const handleGenerateNewDocId = useCallback(() => {
-    const newDocId = uuidV4()
-    onTopicChange(newDocId)
+    const newRoomKey = createRoomKey()
+
+    onRoomChange(newRoomKey, identity)
     setNewDocIdGenerated(true)
 
-    localStorage.setItem(TOPIC_KEY, newDocId)
-    const existingSession = loadSession()
-
-    if (existingSession) {
-      existingSession.topic = newDocId
-      localStorage.setItem(SESSION_KEY, JSON.stringify(existingSession))
-    }
+    localStorage.setItem(ROOM_KEY_KEY, newRoomKey)
+    localStorage.setItem(ROOM_CREATOR_KEY, identity)
 
     setTimeout(() => setNewDocIdGenerated(false), BUTTON_TIMEOUT_MS)
-  }, [onTopicChange])
+  }, [onRoomChange, identity])
 
   const submit = useCallback(async () => {
     const name = inputName.trim()
@@ -132,12 +133,11 @@ export const LoginView: React.FC<LoginViewProps> = ({
     onLogin({
       username: name,
       transport,
-      topic,
       docType,
       stunUrl: stunUrl.trim(),
       signalingUrl: transport === Transport.SIGNALING_SERVER ? signalingUrl.trim() : undefined,
     })
-  }, [inputName, transport, topic, docType, beeUrl, stamp, onLogin, stunUrl, signalingUrl])
+  }, [inputName, transport, docType, beeUrl, stamp, onLogin, stunUrl, signalingUrl])
 
   return (
     <div className="login-view">
@@ -164,12 +164,15 @@ export const LoginView: React.FC<LoginViewProps> = ({
             <div style={{ flex: 1 }}>
               <label className="login-view__field-label">Document ID</label>
               <input
-                value={topic}
-                onChange={e => onTopicChange(e.target.value)}
-                onBlur={() => localStorage.setItem(TOPIC_KEY, topic)}
-                placeholder={DEFAULT_TOPIC}
+                value={new Room(roomKey).id}
+                readOnly
+                title="Derived from the room key — join with an invite link, not with this id"
                 className={`login-view__field-input login-view__field-input--mono`}
               />
+              <span className="login-view__stamp-warning">
+                <AlertTriangle size={12} />
+                Identifies the document but does not open it — the invite link carries the key
+              </span>
             </div>
           </div>
 

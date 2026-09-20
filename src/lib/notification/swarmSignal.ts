@@ -146,9 +146,24 @@ export class SwarmSignal implements ISwarmSignal {
     return result.status === 'ok' ? result.payload : { records: [] }
   }
 
+  /*
+   * A head lookup that finds nothing is taken at its word here, where every other feed confirms it
+   * forward. The confirmation would read index 0 — the address this session's first signal record
+   * is about to occupy — and a miss on it takes one of the node's retrieval peers out of play for
+   * a minute, on the one chunk the peer waiting for our offer or answer is polling. The forward
+   * walk exists to catch a head Bee under-reports on a loaded node; this feed's chunks were
+   * uploaded to this node and answer from its own store, so a lookup that returns nothing is
+   * reporting an empty feed rather than a slow one, and it already probed index 0 to say so.
+   */
   private async resolveOwnTail(reader: IndexedFeedReader): Promise<bigint> {
+    const head = await this.latestIndex(reader)
+
+    if (head === null) {
+      return -1n
+    }
+
     return await resolveFeedTail(
-      () => this.latestIndex(reader),
+      () => Promise.resolve(head),
       index => this.readIndex(reader, index),
       TAG,
     )

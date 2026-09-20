@@ -30,6 +30,14 @@ const CONNECT_TIMEOUT_MS = 90_000
  * has already given up on it and will re-offer under a new session id.
  */
 const OFFER_MAX_AGE_MS = CONNECT_TIMEOUT_MS
+/*
+ * How long after writing an offer an answer can first plausibly exist: the peer has to notice the
+ * offer on a poll of its own, read it off the feed, gather ICE and write back. Every read before
+ * then is a guaranteed miss on the exact address the answer will occupy, and misses are what make
+ * the node stop serving that address for a minute — so the reads that cost the most are the ones
+ * that could never have succeeded.
+ */
+const ANSWER_EARLIEST_MS = 6_000
 const MAX_CONSECUTIVE_RETRIES = 5
 const CHANNEL_BINARY_TYPE = 'arraybuffer'
 
@@ -53,6 +61,8 @@ class SwarmRtcTransport implements DocTransport {
   private swarmRtcPeers = new Map<string, RTCPeerConnection>()
   // sessionId per peer for correlating incoming answers to our outstanding offer
   private pendingOfferSessions = new Map<string, string>()
+  // when our offer to a peer was written — the answer cannot be readable before it
+  private offerWrittenAt = new Map<string, number>()
   // `"peerAddress:sessionId"` keys already answered — prevents double-answering the same offer
   private sentAnswerKeys = new Set<string>()
   // addresses with a retry timer in flight — prevents duplicate retries from both failed and channel-close paths
@@ -107,6 +117,7 @@ class SwarmRtcTransport implements DocTransport {
 
     this.swarmRtcPeers.clear()
     this.connectWatchdogs.clear()
+    this.offerWrittenAt.clear()
     this.pendingRetries.clear()
     this.retryCounts.clear()
     this.openChannels.clear()
@@ -230,6 +241,7 @@ class SwarmRtcTransport implements DocTransport {
     }
 
     await this.swarmSignal.writeRecord(record)
+    this.offerWrittenAt.set(peerAddress, Date.now())
 
     this.logger.debug(`${TAG} offer written → ${peerAddress.slice(0, 8)}… sessionId=${sessionId.slice(0, 8)}`)
     /*
@@ -413,6 +425,14 @@ class SwarmRtcTransport implements DocTransport {
       return
     }
 
+    const offeredAt = this.offerWrittenAt.get(peerAddress)
+
+    // Waiting on an answer that cannot be there yet. Asking anyway is what stops it being readable
+    // once it is.
+    if (offeredAt !== undefined && Date.now() - offeredAt < ANSWER_EARLIEST_MS) {
+      return
+    }
+
     const payload = await this.swarmSignal.read(peerAddress)
 
     // A fresh record is proof of life: let a peer that is still negotiating earn back its retries
@@ -491,6 +511,7 @@ class SwarmRtcTransport implements DocTransport {
     try {
       await pc.setRemoteDescription({ type: SignalType.ANSWER, sdp: record.sdp })
       this.pendingOfferSessions.delete(peerAddress)
+      this.offerWrittenAt.delete(peerAddress)
       this.logger.debug(`${TAG} handshake complete with ${peerAddress.slice(0, 8)}…`)
       this.armConnectWatchdog(peerAddress, pc)
     } catch (err) {

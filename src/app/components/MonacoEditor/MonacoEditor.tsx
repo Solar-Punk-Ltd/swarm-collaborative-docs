@@ -27,6 +27,8 @@ interface MonacoEditorProps {
   options?: monaco.editor.IStandaloneEditorConstructionOptions
   filePathKey?: string
   awareness?: Map<string, AwarenessState>
+  /** Read-only while the document is still being assembled, so edits cannot land on a fragment. */
+  disabled?: boolean
   onCursorChange?: (cursor: CursorPosition) => void
 }
 
@@ -35,6 +37,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   options,
   filePathKey = SEED,
   awareness,
+  disabled = false,
   onCursorChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -55,6 +58,10 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
       editorRef.current = null
     }
   }, [options])
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({ readOnly: disabled })
+  }, [disabled])
 
   useEffect(() => {
     if (!editorRef.current || !yDoc) {

@@ -32,8 +32,22 @@ export interface DocSettings {
      * during `start()`; an unusable batch raises `DOC_ERROR` instead of failing at first write.
      */
     stamp: string
-    /** Shared room identifier. All peers in the same room must use the same `topic`. */
-    topic: string
+    /**
+     * Room secret, which is what identifies the room — peers in the same room hold the same key.
+     *
+     * Every feed key derives from it, and it never leaves the client. Treat it as a bearer
+     * credential: whoever has it can read and write the document. Mint one with `createRoomKey`,
+     * share it with `encodeRoomInvite`, and read one back with `decodeRoomInvite`.
+     */
+    roomKey: string
+    /**
+     * Identity address of the room's creator, as carried by the invite link.
+     *
+     * Member discovery reads the room's directory feed, which is derivable from `roomKey` alone,
+     * so this is only a head start — one announce feed that can be read before the directory
+     * answers, and a fallback path if that read fails.
+     */
+    roomCreator?: string
     /**
      * Pre-seeded peer identity addresses with usernames. Treated as display hints only —
      * a session's feeds are addressed by its session address, which is resolved from the

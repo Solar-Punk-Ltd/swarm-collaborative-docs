@@ -37,6 +37,28 @@
     }
   }
 
+  &__sync-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px;
+    font-size: 12px;
+    color: $swarm-orange;
+    background: rgba(247, 104, 8, 0.08);
+    border-bottom: 1px solid rgba(247, 104, 8, 0.2);
+  }
+
+  &__sync-bar--soft {
+    color: $swarm-muted;
+    background: rgba(120, 120, 180, 0.06);
+    border-bottom-color: $swarm-border;
+  }
+
+  &__sync-spinner {
+    animation: session-view-spin 1s linear infinite;
+    flex-shrink: 0;
+  }
+
   &__doc-block {
     height: 100%;
     display: flex;
@@ -133,7 +155,10 @@
     gap: 4px;
     opacity: 0.45;
     filter: grayscale(0.8);
-    transition: opacity 0.2s ease, filter 0.2s ease, border-color 0.2s ease;
+    transition:
+      opacity 0.2s ease,
+      filter 0.2s ease,
+      border-color 0.2s ease;
 
     &--connected {
       opacity: 1;
@@ -193,6 +218,28 @@
         color: $swarm-orange;
         border-color: rgba(247, 104, 8, 0.35);
         background: rgba(247, 104, 8, 0.08);
+      }
+    }
+
+    &--invite {
+      color: $swarm-orange;
+      border-color: rgba(247, 104, 8, 0.3);
+      background: rgba(247, 104, 8, 0.08);
+
+      &:hover {
+        background: rgba(247, 104, 8, 0.16);
+        border-color: rgba(247, 104, 8, 0.45);
+      }
+
+      &-copied {
+        color: #4ade80;
+        border-color: rgba(74, 222, 128, 0.4);
+        background: rgba(74, 222, 128, 0.12);
+
+        &:hover {
+          background: rgba(74, 222, 128, 0.18);
+          border-color: rgba(74, 222, 128, 0.5);
+        }
       }
     }
 
@@ -320,5 +367,11 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes session-view-spin {
+  to {
+    transform: rotate(360deg);
   }
 }

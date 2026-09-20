@@ -1,4 +1,5 @@
-import { uuidV4 } from 'lib'
+import { PrivateKey } from '@ethersphere/bee-js'
+import { createRoomKey, getSigner, uuidV4 } from 'lib'
 
 import {
   BEE_URL_KEY,
@@ -6,11 +7,13 @@ import {
   DEFAULT_ICE_SERVER_URL,
   DEFAULT_SIGNALING_SERVER_URL,
   DOCTYPE_KEY,
+  IDENTITY_KEY,
+  ROOM_CREATOR_KEY,
+  ROOM_KEY_KEY,
   SESSION_KEY,
   SIGNALING_URL_KEY,
   STAMP_KEY,
   STUN_URL_KEY,
-  TOPIC_KEY,
   TRANSPORT_KEY,
   USERNAME_KEY,
 } from './constants'
@@ -26,16 +29,45 @@ export function loadSession(): Session | null {
   }
 }
 
+/**
+ * The browser's long-lived identity key, minted on first use.
+ *
+ * Resolved before login rather than during it, because an invite link names its creator and the
+ * creator is this identity.
+ */
+export function loadIdentity(): PrivateKey {
+  const stored = localStorage.getItem(IDENTITY_KEY)
+
+  if (stored) return new PrivateKey(stored)
+
+  const key = getSigner(uuidV4()).toHex()
+  localStorage.setItem(IDENTITY_KEY, key)
+
+  return new PrivateKey(key)
+}
+
+/** The room this browser is on, minting one on first run so there is always a document to open. */
+export function loadRoomKey(): string {
+  const stored = localStorage.getItem(ROOM_KEY_KEY)
+
+  if (stored) return stored
+
+  const key = createRoomKey()
+  localStorage.setItem(ROOM_KEY_KEY, key)
+
+  return key
+}
+
+export function loadRoomCreator(): string {
+  return localStorage.getItem(ROOM_CREATOR_KEY) ?? ''
+}
+
 export function loadBeeUrl(): string {
   return localStorage.getItem(BEE_URL_KEY) ?? DEFAULT_BEE_API_URL
 }
 
 export function loadUsername(): string {
   return localStorage.getItem(USERNAME_KEY) ?? ''
-}
-
-export function loadTopic(): string {
-  return localStorage.getItem(TOPIC_KEY) ?? uuidV4()
 }
 
 export function loadStamp(): string {

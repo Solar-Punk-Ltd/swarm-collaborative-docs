@@ -9,8 +9,12 @@ export interface SwarmDocContext {
   error: Error | null
   members: Map<string, MemberEntry> | null
   peerStates: Map<string, PeerConnectionState>
-  /** Init finished — the document is safe to edit, with or without peers. */
+  /** Init finished — the document exists, though peers found at startup may still owe state. */
   ready: boolean
+  /** Every peer present at startup has delivered state, or the wait for them timed out. */
+  synced: boolean
+  /** Peers that still owe state. Non-zero after `synced` means they were given up on. */
+  pendingPeers: number
   /** At least one remote peer has a live channel. */
   connected: boolean
   awareness: Map<string, AwarenessState>
@@ -23,15 +27,19 @@ export interface SwarmDocContext {
 export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
   const docRef = useRef<ISwarmDoc | null>(null)
   const [doc, setDoc] = useState<Y.Doc | null>(null)
-  const [{ error, members, ready, connected }, setStatus] = useState<{
+  const [{ error, members, ready, synced, pendingPeers, connected }, setStatus] = useState<{
     error: Error | null
     members: Map<string, MemberEntry> | null
     ready: boolean
+    synced: boolean
+    pendingPeers: number
     connected: boolean
   }>({
     error: null,
     members: null,
     ready: false,
+    synced: false,
+    pendingPeers: 0,
     connected: false,
   })
   const [awareness, setAwareness] = useState<Map<string, AwarenessState>>(new Map())
@@ -55,6 +63,11 @@ export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
       .getEmitter()
       .on(DOC_EVENTS.MEMBERS_UPDATED, (m: Map<string, MemberEntry>) => setStatus(s => ({ ...s, members: new Map(m) })))
     swarmDoc.getEmitter().on(DOC_EVENTS.DOC_READY, () => setStatus(s => ({ ...s, ready: true })))
+    swarmDoc
+      .getEmitter()
+      .on(DOC_EVENTS.DOC_SYNC_STATE, ({ synced: done, pending }: { synced: boolean; pending: number }) =>
+        setStatus(s => ({ ...s, synced: done, pendingPeers: pending })),
+      )
     swarmDoc.getEmitter().on(DOC_EVENTS.PEERS_CONNECTED, () => setStatus(s => ({ ...s, connected: true })))
     swarmDoc.getEmitter().on(DOC_EVENTS.AWARENESS_UPDATED, (update: AwarenessState) => {
       setAwareness(prev => new Map(prev).set(update.address, update))
@@ -70,7 +83,7 @@ export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
       swarmDoc.stop()
       docRef.current = null
       setDoc(null)
-      setStatus({ error: null, members: null, ready: false, connected: false })
+      setStatus({ error: null, members: null, ready: false, synced: false, pendingPeers: 0, connected: false })
       setAwareness(new Map())
       setPeerStates(new Map())
     }
@@ -94,6 +107,8 @@ export const useSwarmDoc = ({ user, infra }: DocSettings): SwarmDocContext => {
     members,
     peerStates,
     ready,
+    synced,
+    pendingPeers,
     connected,
     awareness,
     updateCursor,

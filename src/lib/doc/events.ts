@@ -8,10 +8,24 @@ export const DOC_EVENTS = {
   DOC_ERROR: 'docError',
   /**
    * Fired once initialisation finishes: stamps validated, own snapshot restored and the member
-   * list merged. The document is safe to edit from this point, whether or not anyone else is here.
-   * Payload: `{ memberCount: number }`.
+   * list merged. The document exists and is addressable from this point.
+   *
+   * It may still be **incomplete**: peers found during init hold state of their own, and a feed
+   * that was not readable yet delivers it seconds later. Gate an editor on `DOC_SYNC_STATE` as
+   * well, or the first edits are made against a fragment of the document and merge into a version
+   * the author never saw. Payload: `{ memberCount: number }`.
    */
   DOC_READY: 'docReady',
+  /**
+   * Fired while the document is still being assembled from the peers known at startup, and once
+   * more when it is done. Payload: `{ synced: boolean; pending: number }`.
+   *
+   * `synced` latches: it turns true when every peer found during init has delivered state, or when
+   * the wait for the stragglers times out, and never goes back to false — a peer arriving later
+   * must not disable an editor somebody is typing in. `pending` keeps counting peers that still
+   * owe state, so an app can say so without blocking on it.
+   */
+  DOC_SYNC_STATE: 'docSyncState',
   /**
    * Fired when the transport's own channel is usable. Says nothing about peers being present —
    * gate an editor on `DOC_READY`, and a presence indicator on `PEERS_CONNECTED`. Payload: `true`.

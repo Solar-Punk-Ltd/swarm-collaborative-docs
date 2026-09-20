@@ -12,7 +12,6 @@ export enum DocType {
 
 export interface SessionOpts {
   username: string
-  topic: string
   transport: Transport
   docType: DocType
   stunUrl: string
@@ -23,7 +22,6 @@ export interface Session {
   username: string
   privKey: string
   pubKey: string
-  topic: string
   docType: DocType
   transport: Transport
   stunUrl: string

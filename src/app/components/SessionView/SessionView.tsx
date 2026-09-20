@@ -1,27 +1,30 @@
 import { PrivateKey } from '@ethersphere/bee-js'
 import { createSignalingServerTransport, createSwarmRtcTransport, DocSettings, PeerConnectionState } from 'lib'
-import { Copy, FileText, LogOut, RefreshCw, Settings, Users } from 'lucide-react'
+import { Copy, FileText, Link, Loader2, LogOut, RefreshCw, Settings, Users } from 'lucide-react'
 import React, { ReactNode, useCallback, useMemo, useState } from 'react'
 
 import { useSwarmDoc } from '../../hooks/useSwarmDoc'
-import { BEE_URL_KEY, DEFAULT_BEE_API_URL, DEFAULT_TOPIC, STAMP_KEY, TOPIC_KEY } from '../../utils/constants'
+import { BEE_URL_KEY, DEFAULT_BEE_API_URL, STAMP_KEY } from '../../utils/constants'
 import { colorForAddress } from '../../utils/peers'
-import { DocType, Session, Transport, TRANSPORT_LABELS } from '../../utils/types'
+import { AwarenessState, DocType, Session, Transport, TRANSPORT_LABELS } from '../../utils/types'
+import { buildInviteLink } from '../../utils/url'
 import { DocEditor } from '../DocEditor/DocEditor'
 import { MonacoEditor } from '../MonacoEditor/MonacoEditor'
 
 import './SessionView.scss'
+
+const BUTTON_TIMEOUT_MS = 1500
 
 interface SessionViewProps {
   session: Session
   sessionId: string
   beeUrl: string
   stamp: string
-  topic: string
+  roomKey: string
+  roomCreator: string
   docType: DocType
   onBeeUrlChange: (url: string) => void
   onStampChange: (v: string) => void
-  onTopicChange: (v: string) => void
   onLogout: () => void
 }
 
@@ -30,18 +33,18 @@ export const SessionView: React.FC<SessionViewProps> = ({
   sessionId,
   beeUrl,
   stamp,
-  topic,
+  roomKey,
+  roomCreator,
   docType,
   onBeeUrlChange,
   onStampChange,
-  onTopicChange,
   onLogout,
 }) => {
   const signer = useMemo(() => new PrivateKey(session.privKey), [session.privKey])
   const [configOpen, setConfigOpen] = useState(false)
   const [urlDraft, setUrlDraft] = useState(beeUrl)
-  const [topicDraft, setTopicDraft] = useState(topic)
   const [stampDraft, setStampDraft] = useState(stamp)
+  const [inviteCopied, setInviteCopied] = useState(false)
 
   const applyConfig = () => {
     const trimmedUrl = urlDraft.trim()
@@ -52,10 +55,22 @@ export const SessionView: React.FC<SessionViewProps> = ({
     }
     localStorage.setItem(STAMP_KEY, stampDraft)
     onStampChange(stampDraft)
-    localStorage.setItem(TOPIC_KEY, topicDraft)
-    onTopicChange(topicDraft)
     setConfigOpen(false)
   }
+
+  // This is the link participants join with. It carries the room secret, which is what grants
+  // access — the document id shown in the header does not.
+  const copyInvite = useCallback(async () => {
+    const link = buildInviteLink({ key: roomKey, creator: roomCreator, transport: session.transport, docType })
+
+    try {
+      await navigator.clipboard.writeText(link)
+      setInviteCopied(true)
+      setTimeout(() => setInviteCopied(false), BUTTON_TIMEOUT_MS)
+    } catch {
+      // clipboard denied — nothing useful to show here
+    }
+  }, [roomKey, roomCreator, session.transport, docType])
 
   const docConfig: DocSettings = useMemo(() => {
     const getTransport = () => {
@@ -73,7 +88,8 @@ export const SessionView: React.FC<SessionViewProps> = ({
       infra: {
         beeUrl,
         stamp,
-        topic,
+        roomKey,
+        roomCreator,
         transport: getTransport(),
       },
     }
@@ -84,13 +100,56 @@ export const SessionView: React.FC<SessionViewProps> = ({
     session.signalingUrl,
     session.stunUrl,
     signer,
-    topic,
+    roomKey,
+    roomCreator,
     beeUrl,
     stamp,
   ])
 
-  const { doc, error, members, peerStates, ready, awareness, updateCursor, refreshMemberList, dismissError } =
-    useSwarmDoc(docConfig)
+  const {
+    doc,
+    error,
+    members,
+    peerStates,
+    ready,
+    synced,
+    pendingPeers,
+    awareness,
+    updateCursor,
+    refreshMemberList,
+    dismissError,
+  } = useSwarmDoc(docConfig)
+
+  // Held read-only until the peers found at startup have handed over their state: what is on screen
+  // before that is a fragment of the document, and editing it merges into a version never seen.
+  const editable = ready && synced
+
+  // A caret means something only while its owner is still in the room and still reachable —
+  // otherwise a peer that logged out leaves its last position sitting in the text. The entry is
+  // kept with a null cursor rather than dropped, because that is what tells an editor holding
+  // decorations to take them down; removing it would just stop anyone mentioning them again.
+  const liveAwareness = useMemo(() => {
+    const visible = new Map<string, AwarenessState>()
+
+    for (const [address, state] of awareness) {
+      const present = members?.get(address)?.live === true && peerStates.get(address) === PeerConnectionState.Connected
+
+      visible.set(address, present ? state : { ...state, cursor: null })
+    }
+
+    return visible
+  }, [awareness, members, peerStates])
+
+  const syncMessage = (): string => {
+    const peers = `${pendingPeers} peer${pendingPeers === 1 ? '' : 's'}`
+
+    if (!ready) return 'Opening the document…'
+
+    // Still pending after the wait ended: editable, but say so rather than let it look complete.
+    if (synced) return `Waiting on ${peers} — their edits are not here yet`
+
+    return `Collecting the document from ${peers} — read-only for now`
+  }
 
   const transportLabel = TRANSPORT_LABELS[session.transport]
 
@@ -105,11 +164,17 @@ export const SessionView: React.FC<SessionViewProps> = ({
             </button>
           </div>
         ) : null}
+        {!editable || pendingPeers > 0 ? (
+          <div className={`session-view__sync-bar${editable ? ' session-view__sync-bar--soft' : ''}`}>
+            <Loader2 size={13} className="session-view__sync-spinner" />
+            {syncMessage()}
+          </div>
+        ) : null}
         {doc &&
           (docType === DocType.Code ? (
-            <MonacoEditor yDoc={doc} awareness={awareness} onCursorChange={updateCursor} />
+            <MonacoEditor yDoc={doc} disabled={!editable} awareness={liveAwareness} onCursorChange={updateCursor} />
           ) : (
-            <DocEditor yDoc={doc} disabled={!ready} awareness={awareness} onCursorChange={updateCursor} />
+            <DocEditor yDoc={doc} disabled={!editable} awareness={liveAwareness} onCursorChange={updateCursor} />
           ))}
       </div>
     )
@@ -182,6 +247,14 @@ export const SessionView: React.FC<SessionViewProps> = ({
             <Copy size={13} />
             Copy
           </button>
+          <button
+            className={`session-view__btn session-view__btn--invite${inviteCopied ? ' session-view__btn--invite-copied' : ''}`}
+            title={roomKey ? 'Copy the invite link — it carries the room key' : 'Copy the invite link'}
+            onClick={copyInvite}
+          >
+            <Link size={13} />
+            {inviteCopied ? 'Copied' : 'Invite'}
+          </button>
           <span className="session-view__transport-badge">{transportLabel}</span>
 
           {members && members.size > 0 && (
@@ -206,7 +279,6 @@ export const SessionView: React.FC<SessionViewProps> = ({
             onClick={() => {
               setUrlDraft(beeUrl)
               setStampDraft(stamp)
-              setTopicDraft(topic)
               setConfigOpen(o => !o)
             }}
             className={`session-view__btn session-view__btn--config${configOpen ? ' session-view__btn--config-open' : ''}`}
@@ -242,14 +314,6 @@ export const SessionView: React.FC<SessionViewProps> = ({
                   placeholder: 'required — a usable postage batch ID',
                   mono: true,
                   onReset: () => setStampDraft(''),
-                },
-                {
-                  label: 'Topic',
-                  value: topicDraft,
-                  onChange: setTopicDraft,
-                  placeholder: DEFAULT_TOPIC,
-                  mono: true,
-                  onReset: () => setTopicDraft(DEFAULT_TOPIC),
                 },
               ] as const
             ).map(({ label, value, onChange, placeholder, mono, onReset }) => (

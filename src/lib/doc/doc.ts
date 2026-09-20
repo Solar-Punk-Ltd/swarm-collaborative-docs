@@ -19,6 +19,7 @@ import { API_VERSION, DOC_FEED_SUFFIX } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
 import { EventEmitter } from '../utils/eventEmitter'
 import { Logger } from '../utils/logger'
+import { Room } from '../utils/room'
 
 import { DocFeed } from './docFeed'
 import { DOC_EVENTS } from './events'
@@ -28,8 +29,19 @@ const TAG = 'SwarmDoc'
 const DEBOUNCE_MS = 500
 const DEFAULT_MEMBER_LIST_POLL_INTERVAL_MS = 5000
 const DISCONNECTED_MEMBER_POLL_INTERVAL_MS = 15000
-const REANNOUNCE_COOLDOWN_MS = 30000
 const MIN_TTL_WARN_DAYS = 2
+/*
+ * How long the document waits for peers that were present at startup but whose state has not
+ * arrived. A peer that is simply gone would otherwise hold the document shut forever, so the wait
+ * has to end; ending it too early is what hands the author a fragment to edit.
+ *
+ * Sized against the retries that can still rescue it rather than against a feel: the disconnected
+ * poll runs every 15 s and a data channel opening triggers a fetch of its own, so this covers two
+ * poll passes and most handshakes. A feed poisoned by a failed read stays unreadable for about a
+ * minute, and waiting that long before allowing a keystroke is worse than opening incomplete —
+ * which is why the count of peers still owing state stays visible afterwards.
+ */
+const SYNC_GRACE_MS = 30000
 
 export class SwarmDoc implements ISwarmDoc {
   public readonly doc: Y.Doc
@@ -43,7 +55,7 @@ export class SwarmDoc implements ISwarmDoc {
   private username: string
   private ownIndex: bigint = -1n
   private ownIndexResolved = false
-  private lastReannounceAt = 0
+  private room: Room
   private docFeedId: string
   private docTopic: string
   private transport: DocTransport
@@ -62,6 +74,10 @@ export class SwarmDoc implements ISwarmDoc {
   private localCursor: CursorPosition = null
   private cursorTimer: ReturnType<typeof setInterval> | null = null
   private connectedPeers = new Set<string>()
+  /** Peers present at startup whose state has not been applied yet. */
+  private pendingSync = new Set<string>()
+  private synced = false
+  private syncTimer: ReturnType<typeof setTimeout> | null = null
   private readonly logger = Logger.getInstance()
 
   constructor(settings: DocSettings) {
@@ -77,10 +93,12 @@ export class SwarmDoc implements ISwarmDoc {
     this.beeApiUrl = settings.infra.beeUrl
     this.stampId = settings.infra.stamp
 
-    this.docFeedId = settings.infra.topic + DOC_FEED_SUFFIX
+    this.room = new Room(settings.infra.roomKey, settings.infra.roomCreator)
+
+    this.docFeedId = this.room.namespace + DOC_FEED_SUFFIX
     this.docTopic = Topic.fromString(this.docFeedId).toString()
 
-    this.members = new Members(this.docFeedId, this.beeApiUrl, this.stampId)
+    this.members = new Members(this.room, this.identityAddress, this.beeApiUrl, this.stampId)
     this.docFeed = new DocFeed(this.beeApiUrl, this.stampId)
 
     this.nameHints = new Map(
@@ -118,6 +136,11 @@ export class SwarmDoc implements ISwarmDoc {
   private registerMember(address: string, entry: MemberEntry): void {
     const named = { ...entry, username: entry.username || this.nameHints.get(entry.identity) || entry.username }
     const isNew = this.members.register(address, named)
+
+    // A peer that has shut down will never deliver, so it must not hold the document shut either.
+    if (!named.live) {
+      this.resolvePendingSync(address)
+    }
 
     // Dialled regardless of `live`: the flag is last-write-wins shared state, and a stale retire
     // (a reload reuses the session id, so its retire can land after the new instance's add) would
@@ -179,6 +202,11 @@ export class SwarmDoc implements ISwarmDoc {
 
   public stop(): void {
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
+
+    if (this.syncTimer) {
+      clearTimeout(this.syncTimer)
+      this.syncTimer = null
+    }
 
     for (const timer of [this.memberListPollTimer, this.disconnectedPollTimer, this.cursorTimer]) {
       if (timer) clearInterval(timer)
@@ -301,6 +329,69 @@ export class SwarmDoc implements ISwarmDoc {
     this.logger.debug(`${TAG} init: done — ownIndex: ${this.ownIndex}`)
 
     this.emitter.emit(DOC_EVENTS.DOC_READY, { memberCount: this.members.all().size })
+    this.startSyncWatch()
+  }
+
+  /*
+   * A peer discovered at startup whose snapshot did not read yet still owes us part of the
+   * document. Editing before it arrives means typing into a fragment and merging the result into a
+   * version the author never saw, which is how a document silently loses content.
+   */
+  private startSyncWatch(): void {
+    for (const [address, entry] of this.members.all()) {
+      if (address !== this.ownAddress && entry.live && this.members.lastIndex(address) < 0n) {
+        this.pendingSync.add(address)
+      }
+    }
+
+    if (this.pendingSync.size === 0) {
+      this.markSynced()
+
+      return
+    }
+
+    this.logger.debug(`${TAG} document incomplete — waiting on ${this.pendingSync.size} peer(s)`)
+    this.emitSyncState()
+
+    this.syncTimer = setTimeout(() => {
+      this.logger.warn(
+        `${TAG} ${this.pendingSync.size} peer(s) delivered no state in ${SYNC_GRACE_MS}ms — opening the document anyway`,
+      )
+      this.markSynced()
+    }, SYNC_GRACE_MS)
+  }
+
+  /** Records that a peer no longer owes state, because it delivered some or is no longer live. */
+  private resolvePendingSync(address: string): void {
+    if (!this.pendingSync.delete(address)) {
+      return
+    }
+
+    if (this.pendingSync.size === 0) {
+      this.markSynced()
+    } else {
+      this.emitSyncState()
+    }
+  }
+
+  // Latched: a peer that joins later must not disable an editor somebody is already typing in.
+  private markSynced(): void {
+    if (this.synced) {
+      return
+    }
+
+    this.synced = true
+
+    if (this.syncTimer) {
+      clearTimeout(this.syncTimer)
+      this.syncTimer = null
+    }
+
+    this.emitSyncState()
+  }
+
+  private emitSyncState(): void {
+    this.emitter.emit(DOC_EVENTS.DOC_SYNC_STATE, { synced: this.synced, pending: this.pendingSync.size })
   }
 
   /*
@@ -334,7 +425,12 @@ export class SwarmDoc implements ISwarmDoc {
   }
 
   private async initMemberList(): Promise<void> {
-    const membersList = await this.members.add(this.ownAddress, this.ownEntry())
+    await this.members.add(this.ownAddress, this.ownEntry())
+
+    // Read straight after announcing rather than waiting for the first poll: discovery is what
+    // gates the whole handshake, and a peer found five seconds later is five seconds of latency.
+    const membersList = (await this.members.read()) ?? new Map()
+
     for (const [addr, entry] of membersList) {
       if (addr !== this.ownAddress) {
         this.registerMember(addr, entry)
@@ -411,6 +507,7 @@ export class SwarmDoc implements ISwarmDoc {
 
     this.members.setIndex(memberAddress, targetIndex)
     this.applyYjsBytes(delta, `${memberAddress.slice(0, 8)} delta idx=${targetIndex}`)
+    this.resolvePendingSync(memberAddress)
   }
 
   private async fetchSnapshot(memberAddress: string, targetIndex?: bigint): Promise<void> {
@@ -438,6 +535,7 @@ export class SwarmDoc implements ISwarmDoc {
 
     this.members.setIndex(memberAddress, targetIx)
     this.applyYjsBytes(entry.snapshot, `${memberAddress.slice(0, 8)} snapshot idx=${targetIx}`)
+    this.resolvePendingSync(memberAddress)
   }
 
   public async refreshMemberList(): Promise<void> {
@@ -454,8 +552,6 @@ export class SwarmDoc implements ISwarmDoc {
     if (!members || members.size === 0) {
       return
     }
-
-    await this.reannounceIfDropped(members)
 
     let changed = false
     for (const [addr, entry] of members) {
@@ -476,25 +572,6 @@ export class SwarmDoc implements ISwarmDoc {
     if (changed) {
       this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
     }
-  }
-
-  /*
-   * Every writer republishes the whole member list, so one that merged from a copy it read before
-   * another peer joined silently drops that peer. Each session therefore guards its own entry: a
-   * list that no longer names us is a list our peers are also missing us from, and putting
-   * ourselves back is what makes us discoverable again. The cooldown bounds it to one write per
-   * interval while a read is parked behind an index it cannot get past.
-   */
-  private async reannounceIfDropped(members: ReadonlyMap<string, MemberEntry>): Promise<void> {
-    const own = members.get(this.ownAddress)
-
-    if (own?.live || Date.now() - this.lastReannounceAt < REANNOUNCE_COOLDOWN_MS) {
-      return
-    }
-
-    this.lastReannounceAt = Date.now()
-    this.logger.debug(`${TAG} member list no longer names this session — re-announcing`)
-    await this.members.add(this.ownAddress, this.ownEntry())
   }
 
   private startMemberListPoll(): void {
@@ -566,6 +643,7 @@ export class SwarmDoc implements ISwarmDoc {
 
         if (known) {
           this.members.register(author, { ...known, live: false })
+          this.resolvePendingSync(author)
           this.emitter.emit(DOC_EVENTS.MEMBERS_UPDATED, this.members.all())
         }
 

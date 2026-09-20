@@ -16,6 +16,7 @@ export type {
   LeavePayload,
 } from './interfaces'
 export type {
+  AnnouncePayload,
   DocTransport,
   DocTransportDeps,
   DocTransportFactory,
@@ -26,5 +27,7 @@ export type {
 } from './interfaces'
 export { PeerConnectionState } from './interfaces'
 
-export { validateStamps } from './utils/bee'
+export { getSigner, validateStamps } from './utils/bee'
 export { uuidV4 } from './utils/common'
+export { createRoomKey, decodeRoomInvite, encodeRoomInvite, Room } from './utils/room'
+export type { RoomInvite } from './utils/room'
