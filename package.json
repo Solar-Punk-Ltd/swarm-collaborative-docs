@@ -6,19 +6,35 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Solar-Punk-Ltd/swarm-collaborative-docs"
+    "url": "https://github.com/Solar-Punk-Ltd/swarm-collaborative-docs.git"
   },
-  "main": "dist/SwarmCollaborativeDocs.cjs.js",
-  "browser": "dist/SwarmCollaborativeDocs.js",
-  "types": "dist/SwarmCollaborativeDocs.d.ts",
+  "homepage": "https://github.com/Solar-Punk-Ltd/swarm-collaborative-docs#readme",
+  "bugs": {
+    "url": "https://github.com/Solar-Punk-Ltd/swarm-collaborative-docs/issues"
+  },
+  "keywords": [
+    "swarm",
+    "bee",
+    "collaborative",
+    "p2p",
+    "docs"
+  ],
+  "type": "module",
+  "main": "./dist/SwarmCollaborativeDocs.cjs",
+  "module": "./dist/SwarmCollaborativeDocs.mjs",
+  "types": "./dist/SwarmCollaborativeDocs.d.ts",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "types": "./dist/SwarmCollaborativeDocs.d.ts",
-      "require": "./dist/SwarmCollaborativeDocs.cjs.js",
-      "import": "./dist/SwarmCollaborativeDocs.js",
-      "default": "./dist/SwarmCollaborativeDocs.cjs.js"
+      "require": "./dist/SwarmCollaborativeDocs.cjs",
+      "import": "./dist/SwarmCollaborativeDocs.mjs",
+      "default": "./dist/SwarmCollaborativeDocs.mjs"
     },
-    "./style.css": "./dist/SwarmCollaborativeDocs.css"
+    "./package.json": "./package.json"
   },
   "scripts": {
     "prepublishOnly": "pnpm run build",
@@ -29,24 +45,21 @@
     "lint": "eslint . --report-unused-disable-directives --no-cache --max-warnings=5",
     "lint:fix": "pnpm run lint --fix",
     "check:types": "tsc -p tsconfig.lib.json --noEmit",
+    "check:types:app": "tsc -p tsconfig.json --noEmit",
     "depcheck": "depcheck .",
     "init:husky": "pnpm husky install"
   },
   "dependencies": {
-    "@ethersphere/bee-js": "github:Apiary-Suite/bee-js",
-    "@solarpunkltd/comment-system": "^1.9.5",
-    "@waku/sdk": "^0.0.36",
-    "lucide-react": "^1.8.0",
-    "monaco-editor": "^0.55.1",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "y-monaco": "^0.1.6",
-    "y-webrtc": "^10.3.0",
-    "yjs": "^13.6.30"
+    "@ethersphere/bee-js": "^13.1.0"
   },
   "peerDependencies": {
-    "react": ">=19",
-    "react-dom": ">=19"
+    "y-webrtc": "^10.3.0",
+    "yjs": "^13.6.0"
+  },
+  "peerDependenciesMeta": {
+    "y-webrtc": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
@@ -68,16 +81,24 @@
     "eslint-plugin-react-hooks": "7.0.1",
     "eslint-plugin-simple-import-sort": "^13.0.0",
     "husky": "^9.1.7",
+    "lucide-react": "^1.8.0",
+    "monaco-editor": "^0.55.1",
     "prettier": "3.8.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "rimraf": "^6.1.3",
     "sass": "^1.99.0",
     "typescript": "^6.0.2",
     "vite": "^8.0.6",
     "vite-plugin-dts": "^4.5.4",
-    "vite-plugin-node-polyfills": "^0.26.0"
+    "vite-plugin-node-polyfills": "^0.26.0",
+    "y-monaco": "^0.1.6",
+    "y-webrtc": "^10.3.0",
+    "yjs": "^13.6.30"
   },
   "engines": {
-    "node": ">=24.0.0",
-    "pnpm": ">=11.0.0"
+    "node": ">=22.12.0",
+    "pnpm": ">=11.0.0",
+    "bee": ">=2.8.1"
   }
 }

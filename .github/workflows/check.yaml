@@ -7,37 +7,33 @@ on:
   pull_request:
     branches:
       - '**'
+  workflow_dispatch:
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+permissions:
+  contents: read
+  pull-requests: read
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-
-    strategy:
-      matrix:
-        node-version: [24.x]
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - uses: pnpm/action-setup@v4
         with:
           version: 11
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
 
-      - name: Setup pnpm cache
-        uses: actions/cache@v3
+      - uses: actions/setup-node@v4
         with:
-          path: ~/.pnpm-store
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
+          node-version: 22.x
+          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -55,8 +51,36 @@ jobs:
       - name: Dependency check
         run: pnpm run depcheck
 
-      - name: Types check
+      - name: Types check (library)
         run: pnpm run check:types
 
-      - name: Build
-        run: pnpm run build
+      - name: Types check (demo app)
+        run: pnpm run check:types:app
+
+      - name: Build demo app
+        run: pnpm run build:app
+
+      - name: Build library
+        run: pnpm run build:lib
+
+      - name: Verify peers are not bundled
+        run: |
+          set -euo pipefail
+          esm=dist/SwarmCollaborativeDocs.mjs
+
+          test -f "$esm" || { echo "::error::missing build output $esm"; exit 1; }
+
+          if grep -q "_transactionCleanups" "$esm"; then
+            echo "::error::yjs is inlined — check rollupOptions.external in vite.config.mts"
+            exit 1
+          fi
+
+          for dep in "yjs" "@ethersphere/bee-js"; do
+            grep -q "\"$dep\"" "$esm" || {
+              echo "::error::$esm does not import \"$dep\" — it was inlined or dropped"
+              exit 1
+            }
+          done
+
+      - name: Validate package manifest
+        run: pnpm dlx publint@latest

@@ -2,9 +2,9 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 
 import App from './pages/App'
-import { parseURLParams } from './utils/url'
+import { consumeInviteFromUrl } from './utils/url'
 
-parseURLParams()
+consumeInviteFromUrl()
 
 // TODO: react strict mode closes the WS connection
 const root = createRoot(document.getElementById('root') as HTMLElement)

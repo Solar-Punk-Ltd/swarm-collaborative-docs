@@ -7,26 +7,86 @@ export enum PeerConnectionState {
 }
 
 /**
+ * One editing session of one identity.
+ *
+ * Keyed in the member map by its **session address**, which is what addresses that session's
+ * Swarm feeds. `identity` is the address of the underlying user, shared by all of their
+ * sessions — group by it to show one row per person.
+ */
+export interface MemberEntry {
+  /** Display name of the user. */
+  username: string
+  /** Identity address of the user (hex, no 0x prefix). Shared across that user's sessions. */
+  identity: string
+  /** Session identifier this entry was registered with. */
+  sessionId: string
+  /** Unix timestamp (ms) the entry was last written or refreshed. */
+  lastSeen: number
+  /**
+   * `false` once the session has shut down. Retired sessions are never dialled, but their
+   * snapshot feed is still read — it holds the only copy of what that session wrote.
+   */
+  live: boolean
+}
+
+/**
+ * Everything one identity publishes about a room, written to that identity's announce feed.
+ *
+ * Each entry replaces the last, so only the newest index matters. `known` is what makes discovery
+ * work without a shared feed: an announce feed is owned by its identity, so a reader that learns
+ * an identity can address its feed and read it, and following `known` outward from the room's
+ * creator reaches everyone the room has seen.
+ */
+export interface AnnouncePayload {
+  /** Payload format version. */
+  v: string
+  /** identity owning this feed. Sessions listed here belong to it. */
+  identity: string
+  /** This identity's sessions, keyed by session address. */
+  sessions: Record<string, MemberEntry>
+  /** identities this writer has seen, including itself. Followed transitively by readers. */
+  known: string[]
+}
+
+/**
+ * One entry of the room's directory feed, naming identities that hold announce feeds.
+ *
+ * The only feed in a room with more than one writer, and the only one whose older entries still
+ * matter: an entry is never rewritten, so readers take the union of all of them and a write that
+ * loses a race costs an index rather than anyone's membership.
+ */
+export interface DirectoryPayload {
+  /** Payload format version. */
+  v: string
+  /** Identities this entry adds to the room. Usually one — the writer's own. */
+  identities: string[]
+}
+
+/**
  * Manages the set of known peers for a collaborative doc session.
  *
  * Two layers of state:
  * - **Local session** — in-memory set of registered peer addresses and their last known feed index.
- * - **Swarm consensus** — append-only feed written by all peers, providing persistent discovery
- *   so late-joining peers can find each other without out-of-band key sharing.
+ * - **Swarm discovery** — a directory feed listing the room's identities, plus one announce feed
+ *   per identity, owned and signed by that identity, holding its sessions.
  *
- * The consensus signer is derived deterministically from the room topic,
- * so any peer who knows the topic can read and write the member list.
- * Last-write-wins; simultaneous join conflicts are acceptable.
+ * Feed topics derive from the room secret, so knowing a room's public identifier grants nothing —
+ * only an invite link does. The directory's signing key derives from the secret too, since every
+ * member must be able to append to it; announce feeds are signed by their identity, so the secret
+ * alone does not let a member write in another's name.
  */
 export interface IMembers {
-  /** Adds `address` to the local peer set. Returns `true` if newly added, `false` if already present. */
-  register(address: string, username: string): boolean
+  /** Adds a session to the local peer set. Returns `true` if newly added, `false` if already present. */
+  register(address: string, entry: MemberEntry): boolean
 
   /** Returns `true` if `address` is in the local peer set. */
   has(address: string): boolean
 
-  /** Returns a shallow copy of the registered peer map. */
-  all(): ReadonlyMap<string, string>
+  /** Returns the entry for `address`, or `undefined` if it is not registered. */
+  get(address: string): MemberEntry | undefined
+
+  /** Returns a shallow copy of the registered peer map, keyed by session address. */
+  all(): ReadonlyMap<string, MemberEntry>
 
   /** Returns the last feed index applied from this peer, or `-1n` if none yet. */
   lastIndex(address: string): bigint
@@ -40,13 +100,21 @@ export interface IMembers {
   /** Returns a shallow copy of the connection-state map. Absent entries default to `Registered`. */
   allConnectionStates(): ReadonlyMap<string, PeerConnectionState>
 
-  /** Reads the current member list from the Swarm consensus feed. Returns `null` if the feed does not exist yet. */
-  read(): Promise<Map<string, string> | null>
+  /**
+   * Reads every announce feed reachable from the identities known so far, following each payload's
+   * `known` list outward. Returns the merged member list, or `null` if nothing was readable.
+   */
+  read(): Promise<Map<string, MemberEntry> | null>
 
   /**
-   * Adds `address` to the Swarm consensus member list.
-   * Reads back the written index to detect last-write-wins conflicts.
-   * Returns the confirmed list, or the optimistic list if verification times out.
+   * Publishes `address` as a session of this identity on its own announce feed.
+   * Returns the merged member list as it stands after the write.
    */
-  add(address: string, username: string): Promise<Map<string, string>>
+  add(address: string, entry: MemberEntry): Promise<Map<string, MemberEntry>>
+
+  /**
+   * Marks `address` as no longer live on this identity's announce feed, so other peers stop
+   * dialling it. Best-effort: a failed write is swallowed, since this runs during shutdown.
+   */
+  retire(address: string): Promise<void>
 }

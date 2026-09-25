@@ -27,6 +27,8 @@ interface MonacoEditorProps {
   options?: monaco.editor.IStandaloneEditorConstructionOptions
   filePathKey?: string
   awareness?: Map<string, AwarenessState>
+  /** Read-only while the document is still being assembled, so edits cannot land on a fragment. */
+  disabled?: boolean
   onCursorChange?: (cursor: CursorPosition) => void
 }
 
@@ -35,6 +37,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   options,
   filePathKey = SEED,
   awareness,
+  disabled = false,
   onCursorChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -55,6 +58,10 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
       editorRef.current = null
     }
   }, [options])
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({ readOnly: disabled })
+  }, [disabled])
 
   useEffect(() => {
     if (!editorRef.current || !yDoc) {
@@ -94,6 +101,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
       onCursorChange({
         anchor: model.getOffsetAt(e.selection.getStartPosition()),
         head: model.getOffsetAt(e.selection.getEndPosition()),
+        scope: filePathKey,
       })
     })
 
@@ -120,6 +128,14 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
 
       // remove previous decorations for this peer
       const prev = decorationsRef.current.get(address) ?? []
+
+      if (cursor && cursor.scope !== undefined && cursor.scope !== filePathKey) {
+        // TODO: use createDecorationsCollection
+        editorRef.current.deltaDecorations(prev, [])
+        decorationsRef.current.delete(address)
+
+        return
+      }
 
       if (!cursor) {
         // peer left or cleared cursor
@@ -181,7 +197,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
         cursor: state.cursor ?? null,
       })
     })
-  }, [awareness])
+  }, [awareness, filePathKey])
 
   return <div ref={containerRef} className="monaco-editor-wrap" />
 }
