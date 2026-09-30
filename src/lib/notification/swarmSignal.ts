@@ -1,3 +1,4 @@
+import type { FeedReader } from '@ethersphere/bee-js'
 import { Bee, EthAddress, FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
 
 import { ISwarmSignal, SignalFeedPayload, SignalRecord } from '../interfaces'
@@ -8,23 +9,8 @@ import { drainFeed, FeedProbe, FeedRead, resolveFeedTail } from '../utils/feed'
 import { Logger } from '../utils/logger'
 
 const TAG = 'SwarmSignal'
-/*
- * A peer's next signal index is the one carrying the offer or answer we are waiting for, so the
- * cost of asking too often is a wasted request while the cost of asking too rarely is a handshake
- * that expires before it is read. Kept close to the poll interval for that reason.
- */
+// Short: a peer's next signal index holds the offer or answer being waited for.
 const SIGNAL_PROBE_BACKOFF_MS = [2_000, 4_000, 8_000]
-// TODO: why is this no imported FeedReader from bee-js?
-/*
- * Structural, so it survives bee-js accessor churn. Peer reads are always by explicit index: an
- * unindexed download runs Bee's feed search, whose probes give up after one second each and count
- * a timeout as a miss, which delayed offer/answer discovery by 18–34 s. Signal feeds are
- * append-only from index 0, so the index is always known and every such read is a direct chunk
- * lookup. The unindexed form is used only to seed a tail resolution, which confirms it forward.
- */
-interface IndexedFeedReader {
-  downloadPayload(options?: { index: FeedIndex }): Promise<{ payload: { toUtf8(): string }; feedIndex: FeedIndex }>
-}
 
 export class SwarmSignal implements ISwarmSignal {
   private readonly bee: Bee
@@ -50,6 +36,7 @@ export class SwarmSignal implements ISwarmSignal {
     this.stamp = stamp
   }
 
+  // Always by explicit index: Bee's feed search delayed offer/answer discovery.
   async read(peerAddress: string): Promise<SignalFeedPayload | null> {
     const reader = this.bee.feed.makeReader(this.topic, new EthAddress(peerAddress))
     const { latest, next } = await drainFeed(
@@ -65,7 +52,7 @@ export class SwarmSignal implements ISwarmSignal {
     return latest
   }
 
-  private async readIndex(reader: IndexedFeedReader, index: bigint): Promise<FeedRead<SignalFeedPayload>> {
+  private async readIndex(reader: FeedReader, index: bigint): Promise<FeedRead<SignalFeedPayload>> {
     try {
       const result = await reader.downloadPayload({ index: FeedIndex.fromBigInt(index) })
 
@@ -107,12 +94,7 @@ export class SwarmSignal implements ISwarmSignal {
     this.stopped = true
   }
 
-  /*
-   * Writes are serialised: each one reads the tail the previous one produced, so two in flight
-   * would both resolve the same index. The chain is kept settled — a rejection left on it would
-   * silently skip every write queued afterwards — and a tail that could not be resolved leaves
-   * `ownIndexResolved` false, so the next write retries the resolution rather than guessing.
-   */
+  // Serialised, since each write reads the tail the previous one produced. Errors are caught to keep the chain alive.
   private enqueue(label: string, task: () => Promise<void>): Promise<void> {
     this.writeQueue = this.writeQueue.then(async () => {
       if (this.stopped) return
@@ -146,16 +128,8 @@ export class SwarmSignal implements ISwarmSignal {
     return result.status === 'ok' ? result.payload : { records: [] }
   }
 
-  /*
-   * A head lookup that finds nothing is taken at its word here, where every other feed confirms it
-   * forward. The confirmation would read index 0 — the address this session's first signal record
-   * is about to occupy — and a miss on it takes one of the node's retrieval peers out of play for
-   * a minute, on the one chunk the peer waiting for our offer or answer is polling. The forward
-   * walk exists to catch a head Bee under-reports on a loaded node; this feed's chunks were
-   * uploaded to this node and answer from its own store, so a lookup that returns nothing is
-   * reporting an empty feed rather than a slow one, and it already probed index 0 to say so.
-   */
-  private async resolveOwnTail(reader: IndexedFeedReader): Promise<bigint> {
+  // An empty head lookup is trusted: confirming it would probe index 0, which our first record is about to use.
+  private async resolveOwnTail(reader: FeedReader): Promise<bigint> {
     const head = await this.latestIndex(reader)
 
     if (head === null) {
@@ -169,9 +143,8 @@ export class SwarmSignal implements ISwarmSignal {
     )
   }
 
-  // Bee's own feed lookup. A miss means an empty feed; an error means the lookup itself is
-  // unavailable, and the forward walk from index 0 answers the question without it.
-  private async latestIndex(reader: IndexedFeedReader): Promise<bigint | null> {
+  // Bee's head lookup; `null` on a miss or error, and the forward walk takes over.
+  private async latestIndex(reader: FeedReader): Promise<bigint | null> {
     try {
       return (await reader.downloadPayload()).feedIndex.toBigInt()
     } catch (err) {
@@ -187,8 +160,7 @@ export class SwarmSignal implements ISwarmSignal {
     const nextIndex = this.currentIndex + 1n
     const writer = this.bee.feed.makeWriter(this.topic, this.ownSigner)
 
-    // Claim the index before uploading and keep it claimed if the upload throws: a failed write may
-    // still have stored its chunk, and reusing the index would put a second chunk at that address.
+    // Claimed before the upload and kept on failure: a failed write may still have stored its chunk.
     this.currentIndex = nextIndex
 
     try {

@@ -1,42 +1,9 @@
-import { ErrorHandler } from './error'
-import { Logger } from './logger'
-
-const logger = Logger.getInstance()
-const errorHandler = ErrorHandler.getInstance()
-
 export function sleep(delay: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, delay))
 }
 
 export function remove0x(hex: string): string {
   return (hex.startsWith('0x') ? hex.slice(2) : hex).toLowerCase()
-}
-
-export async function retryAwaitableAsync<T>(fn: () => Promise<T>, retries = 3, baseDelay = 250): Promise<T> {
-  try {
-    return await fn()
-  } catch (error) {
-    if (retries <= 0) {
-      errorHandler.handleError(error, 'Utils.retryAwaitableAsync')
-      throw error
-    }
-    logger.info(`Retrying in ${baseDelay}ms… (${retries} left). Error: ${(error as Error).message}`)
-    await sleep(baseDelay)
-
-    return retryAwaitableAsync(fn, retries - 1, baseDelay * 2)
-  }
-}
-
-export const indexStrToBigint = (indexStr?: string): bigint | undefined => {
-  if (!indexStr) return undefined
-
-  const isHex = /[a-fA-F]/.test(indexStr) || indexStr.startsWith('0') || indexStr.length > 10
-
-  if (isHex) {
-    return BigInt(parseInt(indexStr, 16))
-  }
-
-  return BigInt(parseInt(indexStr, 10))
 }
 
 const BASE64_CHUNK_SIZE = 0x8000
@@ -73,6 +40,7 @@ export function uuidV4(): string {
   })
 }
 
+/** Yjs transaction origins of updates received from peers. */
 export enum Origin {
   SwarmRtc = 'swarm-rtc',
   Remote = 'remote',

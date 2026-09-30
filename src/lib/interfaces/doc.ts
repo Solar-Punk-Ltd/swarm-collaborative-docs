@@ -6,15 +6,7 @@ import { EventEmitter } from '../utils/eventEmitter'
 import { IMembers, MemberEntry } from './members'
 import type { CursorPosition, NotificationHandler, NotificationPayload } from './notification'
 
-/**
- * Collaborative Yjs document backed by Swarm persistent storage.
- *
- * Each peer writes full Yjs state snapshots to their own per-user Swarm feed and
- * broadcasts incremental deltas to online peers via the configured `DocTransport`.
- * On startup, snapshots from all known peers are fetched and merged, so late-joining
- * peers converge to the same state without any central server.
- *
- */
+/** Collaborative Yjs document: full snapshots on each session's Swarm feed, deltas to online peers. */
 export interface ISwarmDoc {
   /** The underlying Yjs document. Bind editors directly to this instance. */
   readonly doc: Y.Doc
@@ -25,49 +17,32 @@ export interface ISwarmDoc {
   /** Stops the transport, clears all timers, and destroys the Yjs document. */
   stop(): void
 
-  /**
-   * Publishes any queued local edits immediately and resolves once they are on Swarm.
-   * Call before unloading the page — edits are otherwise debounced and can be lost on close.
-   */
+  /** Publishes queued local edits now and resolves once they are on Swarm. Call before the page unloads. */
   flush(): Promise<void>
 
-  /**
-   * Updates the local cursor position and schedules a broadcast.
-   * Call from the editor's selection-change handler.
-   * @param cursor Character index offsets `{ anchor, head }`, or `null` to clear.
-   */
+  /** Sets the local cursor, broadcast on the next tick; `null` clears it. */
   updateCursor(cursor: CursorPosition): void
 
   /** Returns the event emitter. Subscribe to `DOC_EVENTS` constants for doc lifecycle events. */
   getEmitter(): EventEmitter
 
-  /** Reads the Swarm consensus member list and registers any newly discovered peers. */
+  /** Reads the room's member feeds now and registers newly discovered sessions. */
   refreshMemberList(): Promise<void>
 }
 
-/**
- * Transport interface consumed by `SwarmDoc`. Shipped implementations:
- *   - `createSwarmRtcTransport` — WebRTC with SDP signalling stored in Swarm feeds
- *   - `createSignalingServerTransport` — WebRTC via a WebSocket signaling server you run
- */
+/** How `SwarmDoc` reaches online peers; built by a `DocTransportFactory`. */
 export interface DocTransport {
   /** Called once by `SwarmDoc.start()`. */
   start(): void
   /** Tear down the transport and release all resources. Called by `SwarmDoc.stop()`. */
   stop(): void
-  /** Begin receiving notifications, invoking `handler` on each message. No-op on WebRTC-only transports. */
+  /** Receives peer notifications through `handler`. */
   subscribe(topic: string, handler: NotificationHandler): void
-  /** Publish an outgoing notification. No-op on WebRTC-only transports. */
+  /** Sends a notification to connected peers. */
   publish(payload: NotificationPayload): void
-  /**
-   * Called when a peer is registered. WebRTC transports use this to initiate connections;
-   * pub/sub transports treat it as a no-op.
-   */
+  /** Called when a peer is registered; a transport may dial it. */
   connectToPeer(address: string): void
-  /**
-   * Returns `true` if the Yjs update `origin` was applied by this transport.
-   * Prevents re-broadcasting updates that arrived from a remote peer.
-   */
+  /** `true` if this transport applied the update with this origin, so it is not re-published. */
   isRemoteOrigin(origin: unknown): boolean
 }
 
@@ -89,11 +64,15 @@ export interface DocTransportDeps {
   nickname: string
   /** Called when the transport discovers a peer not yet in the member set. */
   onPeerDiscovered: (address: string, entry: MemberEntry) => void
-  /** Topic namespace used to derive per-user Swarm feed identifiers. */
+  /** Prefix of the room's feed topics. Never send it to a server. */
   docFeedId: string
+  /** Name to meet peers under on shared infrastructure, such as a signaling server. Reveals no feed address. */
+  rendezvous: string
+  /** Room-derived secret for encrypting signaling traffic. It must never leave the client. */
+  transportSecret: string
   /** Bee node HTTP API URL. */
   beeApiUrl: string
-  /** secp256k1 private key for signing Swarm feed writes. */
+  /** Session key that signs this session's feed writes. */
   signer: PrivateKey
   /** Postage batch ID for snapshot and signal writes. */
   stampId: string

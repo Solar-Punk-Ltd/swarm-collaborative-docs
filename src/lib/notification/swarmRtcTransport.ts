@@ -12,31 +12,13 @@ import { SwarmSignal } from './swarmSignal'
 import { assertIceServers } from './validate'
 
 const TAG = 'SwarmRtcTransport'
-const SIGNAL_POLL_INTERVAL_MS = 2_000 // 2 sec — indexed feed reads are a direct chunk lookup
-const PEER_RETRY_TIMEOUT_MS = 5_000 // 5 sec
-/*
- * Time from writing or applying an SDP to a usable connection. It has to cover the peer reading
- * our half of the handshake off Swarm, not just ICE and DTLS.
- *
- * The bound that matters is Bee's, not WebRTC's. Polling an index before the peer writes it makes
- * retrieval give up on that address and answer instantly for a minute, so the first read of a
- * freshly written signal index can be delayed by the whole of that window. Anything under it
- * abandons handshakes that were about to succeed: at 45 s one gave up four seconds before its
- * answer became readable, and the round was replayed from scratch for nothing.
- */
+const SIGNAL_POLL_INTERVAL_MS = 2_000
+const PEER_RETRY_TIMEOUT_MS = 5_000
+// Covers the peer reading our SDP off Swarm, which Bee can delay by a minute; at 45 s handshakes were lost.
 const CONNECT_TIMEOUT_MS = 90_000
-/*
- * An SDP older than the window its author holds that connection open for is answering a peer that
- * has already given up on it and will re-offer under a new session id.
- */
+// An older SDP answers a peer that already gave up and re-offered.
 const OFFER_MAX_AGE_MS = CONNECT_TIMEOUT_MS
-/*
- * How long after writing an offer an answer can first plausibly exist: the peer has to notice the
- * offer on a poll of its own, read it off the feed, gather ICE and write back. Every read before
- * then is a guaranteed miss on the exact address the answer will occupy, and misses are what make
- * the node stop serving that address for a minute — so the reads that cost the most are the ones
- * that could never have succeeded.
- */
+// No answer can exist earlier, and reading its index too soon makes it unreadable for a minute.
 const ANSWER_EARLIEST_MS = 6_000
 const MAX_CONSECUTIVE_RETRIES = 5
 const CHANNEL_BINARY_TYPE = 'arraybuffer'
@@ -63,11 +45,11 @@ class SwarmRtcTransport implements DocTransport {
   private pendingOfferSessions = new Map<string, string>()
   // when our offer to a peer was written — the answer cannot be readable before it
   private offerWrittenAt = new Map<string, number>()
-  // `"peerAddress:sessionId"` keys already answered — prevents double-answering the same offer
+  // offers already answered, as `peerAddress:sessionId`
   private sentAnswerKeys = new Set<string>()
-  // addresses with a retry timer in flight — prevents duplicate retries from both failed and channel-close paths
+  // peers with a retry timer in flight
   private pendingRetries = new Set<string>()
-  // consecutive failed connection attempts per peer — a session that reloaded never comes back
+  // consecutive failed connection attempts per peer
   private retryCounts = new Map<string, number>()
   private connectWatchdogs = new Map<string, ReturnType<typeof setTimeout>>()
   private signalPollTimer: ReturnType<typeof setInterval> | null = null
@@ -160,7 +142,7 @@ class SwarmRtcTransport implements DocTransport {
     }
   }
 
-  // Lower address is always the initiator — deterministic assignment prevents both peers from sending offers simultaneously.
+  // The lower address initiates, so two peers never offer at once.
   private isInitiatorFor(peerAddress: string): boolean {
     return this.deps.ownAddress < peerAddress
   }
@@ -244,11 +226,7 @@ class SwarmRtcTransport implements DocTransport {
     this.offerWrittenAt.set(peerAddress, Date.now())
 
     this.logger.debug(`${TAG} offer written → ${peerAddress.slice(0, 8)}… sessionId=${sessionId.slice(0, 8)}`)
-    /*
-     * Nothing else bounds the wait for an answer. Without this the connection sits in
-     * `swarmRtcPeers` for the rest of the session, every later attempt reports the peer as already
-     * connected, and an answer that never arrives is indistinguishable from one still in flight.
-     */
+    // The only bound on the wait for an answer; a lost one would otherwise block this peer for good.
     this.armConnectWatchdog(peerAddress, pc)
   }
 
@@ -342,11 +320,7 @@ class SwarmRtcTransport implements DocTransport {
     this.armConnectWatchdog(peerAddress, pc, key)
   }
 
-  /*
-   * ICE reaching `connected` does not mean the channel is usable: DTLS can stall and leave
-   * `connectionState` at `connecting` indefinitely, which never fires a `failed` event and so
-   * never triggers a retry. Tear the connection down so a fresh offer can be negotiated.
-   */
+  // DTLS can stall in `connecting` without ever failing; tear down so a fresh offer is negotiated.
   private armConnectWatchdog(peerAddress: string, pc: RTCPeerConnection, answerKey?: string): void {
     this.clearConnectWatchdog(peerAddress)
 
@@ -397,8 +371,7 @@ class SwarmRtcTransport implements DocTransport {
 
     this.signalCheckInFlight = true
 
-    // Not filtered by `entry.live`: that flag is last-write-wins shared state and a stale retire
-    // would permanently strand a peer. The retry cap is what stops dialling dead sessions.
+    // Not filtered by `live`: a stale retire would strand a peer. The retry cap stops dialling dead sessions.
     const peerAddrs = Array.from(this.deps.members.all().keys())
 
     if (peerAddrs.length === 0) {
@@ -427,16 +400,14 @@ class SwarmRtcTransport implements DocTransport {
 
     const offeredAt = this.offerWrittenAt.get(peerAddress)
 
-    // Waiting on an answer that cannot be there yet. Asking anyway is what stops it being readable
-    // once it is.
+    // The answer cannot exist yet, and reading its index early makes it unreadable once it does.
     if (offeredAt !== undefined && Date.now() - offeredAt < ANSWER_EARLIEST_MS) {
       return
     }
 
     const payload = await this.swarmSignal.read(peerAddress)
 
-    // A fresh record is proof of life: let a peer that is still negotiating earn back its retries
-    // rather than being written off for good by the cap.
+    // A fresh record is proof of life, so the peer earns back its retries.
     if (payload) {
       this.retryCounts.delete(peerAddress)
     }
@@ -529,8 +500,7 @@ class SwarmRtcTransport implements DocTransport {
     this.retryCounts.delete(peerAddress)
     this.clearConnectWatchdog(peerAddress)
 
-    // Ask for what we lack rather than pushing the whole document: both sides send their state
-    // vector, so the exchange is smaller and self-healing even if one direction is lost.
+    // Both sides send their state vector, so each sends only what the other lacks.
     channel.send(frame(FRAME_STATE_VECTOR, Y.encodeStateVector(this.deps.doc)) as Uint8Array<ArrayBuffer>)
 
     channel.addEventListener('message', (event: MessageEvent) => {
@@ -595,8 +565,7 @@ class SwarmRtcTransport implements DocTransport {
     const attempts = (this.retryCounts.get(peerAddress) ?? 0) + 1
     this.retryCounts.set(peerAddress, attempts)
 
-    // A session that closed its tab is never reachable again; stop dialling it and rely on its
-    // snapshot feed, which still holds everything it wrote.
+    // A closed tab never comes back; its snapshot feed still holds what it wrote.
     if (attempts > MAX_CONSECUTIVE_RETRIES) {
       this.logger.debug(`${TAG} giving up on ${peerAddress.slice(0, 8)}… after ${attempts - 1} attempts (${reason})`)
 
@@ -650,31 +619,11 @@ class SwarmRtcTransport implements DocTransport {
 
 /** Configuration for {@link createSwarmRtcTransport}. */
 export interface SwarmRtcOptions {
-  /**
-   * ICE servers used for every peer connection. Required — the library ships no default,
-   * so connectivity is always a deliberate choice of the integrator.
-   *
-   * A STUN server suffices when at least one peer is directly reachable; peers behind
-   * symmetric NAT need a TURN server with credentials.
-   */
+  /** ICE servers for every connection. Required, no default; peers behind symmetric NAT need TURN. */
   iceServers: RTCIceServer[]
 }
 
-/**
- * Creates a `DocTransportFactory` using Swarm-signaled WebRTC for peer-to-peer sync.
- *
- * SDP offer/answer records are written to each peer's `_signal` Swarm feed,
- * eliminating the need for a central signaling server. ICE gathering completes before
- * the SDP is written, so candidates are embedded rather than sent incrementally.
- *
- * Role assignment is deterministic: the peer with the lower Ethereum address is always
- * the initiator, preventing duplicate connections.
- *
- * `subscribe` and `publish` are no-ops — Yjs updates flow directly over WebRTC data channels.
- *
- * @param options Must supply `iceServers`; there is no default and no fallback.
- * @throws If `iceServers` is missing, empty, or contains a non-ICE URL.
- */
+/** WebRTC transport signalled over Swarm feeds: no server to run, slower to connect. Throws on invalid `iceServers`. */
 export function createSwarmRtcTransport(options: SwarmRtcOptions): DocTransportFactory {
   const iceServers = assertIceServers('createSwarmRtcTransport', options?.iceServers)
 

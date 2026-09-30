@@ -1,7 +1,7 @@
 {
   "name": "@solarpunkltd/swarm-collaborative-docs",
-  "version": "0.0.1",
-  "description": "",
+  "version": "0.1.0",
+  "description": "Real-time collaborative Yjs documents persisted on Swarm, with WebRTC peer sync",
   "author": "solarpunkltd",
   "license": "Apache-2.0",
   "repository": {
@@ -27,6 +27,9 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "types": "./dist/SwarmCollaborativeDocs.d.ts",
@@ -49,10 +52,8 @@
     "depcheck": "depcheck .",
     "init:husky": "pnpm husky install"
   },
-  "dependencies": {
-    "@ethersphere/bee-js": "^13.1.0"
-  },
   "peerDependencies": {
+    "@ethersphere/bee-js": "^13.1.0",
     "y-webrtc": "^10.3.0",
     "yjs": "^13.6.0"
   },
@@ -64,6 +65,7 @@
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
+    "@ethersphere/bee-js": "^13.1.0",
     "@types/node": "^25.5.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -98,7 +100,6 @@
   },
   "engines": {
     "node": ">=22.12.0",
-    "pnpm": ">=11.0.0",
     "bee": ">=2.8.1"
   }
 }

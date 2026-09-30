@@ -4,6 +4,7 @@ interface Events {
   [key: string]: Listener<any>[]
 }
 
+/** Minimal event emitter, returned by `SwarmDoc.getEmitter()`. */
 export class EventEmitter {
   private events: Events = {}
 

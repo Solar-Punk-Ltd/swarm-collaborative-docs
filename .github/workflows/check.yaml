@@ -11,7 +11,7 @@ on:
 
 concurrency:
   group: check-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -28,7 +28,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 11
+          version: 12
 
       - uses: actions/setup-node@v4
         with:
@@ -37,6 +37,12 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: PR title linting
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: echo "$PR_TITLE" | pnpm exec commitlint --config commitlint.config.cjs --verbose
 
       - name: Commit linting
         uses: wagoid/commitlint-github-action@v6

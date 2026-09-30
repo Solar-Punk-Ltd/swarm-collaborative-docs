@@ -1,4 +1,4 @@
-logs
+logs/
 *.log
 *.pid
 coverage
@@ -11,6 +11,6 @@ node_modules/
 .env.*
 !.env.development
 dist
-
-docs/remix.md
+.DS_Store
+docs/*.md
 CLAUDE.md

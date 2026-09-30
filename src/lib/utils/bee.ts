@@ -2,13 +2,7 @@ import { Bee, Bytes, PrivateKey } from '@ethersphere/bee-js'
 
 import { remove0x } from './common'
 
-/**
- * Derives a deterministic `PrivateKey` from an arbitrary string input.
- * Used to create predictable, shared signers for consensus feeds (member list, signal)
- * without requiring out-of-band key distribution.
- *
- * @param input Any string (typically a feed ID or topic namespace).
- */
+/** Deterministic private key from a string: keccak256 of its trimmed, lowercased UTF-8. */
 export function getSigner(input: string): PrivateKey {
   const normalized = input.trim().toLowerCase()
   const inputBytes = Bytes.fromUtf8(normalized)
@@ -17,15 +11,7 @@ export function getSigner(input: string): PrivateKey {
   return new PrivateKey(privateKeyHex)
 }
 
-/**
- * Derives a signing key for one editing session from a user's identity key and a session id.
- *
- * Every session of the same identity gets its own Swarm address, so two browser tabs sharing
- * one identity key no longer collide on the same document and signalling feeds.
- *
- * @param privateKeyHex The user's identity key (hex, with or without 0x).
- * @param sessionId Stable identifier for this session, unique per tab.
- */
+/** Signing key for one session of an identity, so tabs sharing an identity key never share feeds. */
 export function deriveSessionSigner(privateKeyHex: string, sessionId: string): PrivateKey {
   return getSigner(`swarmdoc-session:v1:${remove0x(privateKeyHex)}:${sessionId}`)
 }
@@ -44,15 +30,7 @@ export function isNotFoundError(error: unknown): boolean {
 
 const MIN_TTL_WARN_DAYS = 2
 
-/**
- * Validates the postage stamp against the connected Bee node.
- *
- * @param beeUrl Bee node HTTP API URL.
- * @param stamp Postage batch ID used for all writes.
- * @param ttl Minimum remaining TTL in days before a warning is issued. Defaults to 2.
- * @param onWarn Optional callback for warning messages (TTL near expiry, wrong batch type).
- * @throws If `stamp` is empty, or is not a usable batch on the node.
- */
+/** Throws unless `stamp` is a usable batch on the node; calls `onWarn` when under `ttl` days remain. */
 export async function validateStamps(
   beeUrl: string,
   stamp: string,

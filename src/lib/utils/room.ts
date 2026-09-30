@@ -3,24 +3,7 @@ import { Bytes, PrivateKey } from '@ethersphere/bee-js'
 import { getSigner } from './bee'
 import { remove0x, uuidV4 } from './common'
 
-/*
- * Key schedule for a room and the invite that carries it.
- *
- * A room is its key, and nothing else. The key is random, it never appears in a feed, and it
- * travels only in the fragment of an invite link, which browsers do not send to servers. Naming a
- * room instead — deriving its feed keys from a topic, as this did before — makes the name the
- * credential, so anyone who learns it can rewrite the room.
- *
- * Every feed address derives from the secret, so an invite carries nothing that can go stale. The
- * one exception is `creator`: announce feeds are owned by their identity, and a joiner holding only
- * the key would have no identity to start from until it has read the directory feed.
- *
- * The secret derives every feed *topic*, but not every signing key. The directory is signed with a
- * key derived from the secret, because every member has to be able to append to it. An announce
- * feed is signed by the identity that owns it, so the secret alone does not let a member write in
- * someone else's name.
- */
-// TODO: export scheme for clients if they need it
+// A room is its random key: every feed topic derives from it, and it travels only in an invite's URL fragment.
 const SCHEME = 'swarmdoc:v1'
 const INVITE_VERSION = '1'
 const DISPLAY_ID_CHARS = 32
@@ -29,7 +12,7 @@ const DISPLAY_ID_CHARS = 32
 export interface RoomInvite {
   /** Room secret. Whoever holds it can read and write every feed in the room. */
   key: string
-  /** identity of the room's creator — the starting point for member discovery. */
+  /** Identity of the room's creator; member discovery starts from it. */
   creator: string
   /** Transport the room was created with, so a joiner does not have to pick one. */
   transport?: string
@@ -37,7 +20,7 @@ export interface RoomInvite {
   docType?: string
 }
 
-/** Generates a room secret. The only source of randomness here, shared with session ids. */
+/** Generates a random room secret. */
 export function createRoomKey(): string {
   return uuidV4()
 }
@@ -52,6 +35,8 @@ export class Room {
   public readonly id: string
   /** Prefix for every feed id in this room. */
   public readonly namespace: string
+  /** Name a transport meets its peers under, such as a signaling-server room. */
+  public readonly rendezvous: string
 
   private readonly secret: string
 
@@ -60,30 +45,21 @@ export class Room {
     this.creator = creator ? remove0x(creator.toLowerCase()) : null
     this.secret = key.trim().toLowerCase()
     this.namespace = this.digest('ns')
+    this.rendezvous = this.digest('rv')
     this.id = this.digest('id').slice(0, DISPLAY_ID_CHARS)
   }
 
-  /**
-   * Owner address of an identity's announce feed, which is what a reader needs.
-   *
-   * The identity *is* the owner: an announce feed is signed by the identity key, so Swarm's
-   * single-owner rule is what keeps one writer per feed, rather than everyone agreeing to stay out
-   * of each other's. Holding the room key no longer lets a member publish sessions in someone
-   * else's name. The topic still derives from the secret, so the chunk addresses stay unguessable
-   * from an identity address alone.
-   */
+  /** Secret a transport encrypts signaling with, so a relaying server can neither read it nor join. */
+  transportSecret(): string {
+    return this.digest('rtc')
+  }
+
+  /** Owner address of an identity's announce feed: the identity itself, so only its key can write it. */
   announceOwner(identity: string): string {
     return remove0x(identity.toLowerCase())
   }
 
-  /**
-   * Signing key for the room's directory feed — the one feed every member may write.
-   *
-   * It exists because nothing else lets a member already in the room learn that someone new has
-   * arrived: announce feeds are addressed from an identity, and an identity nobody has heard of
-   * has no derivable address. Entries only ever name identities and are never rewritten, so a
-   * simultaneous write costs one index and a retry instead of deleting what was already there.
-   */
+  /** Signing key of the directory feed, the one feed every member can append to. */
   directorySigner(): PrivateKey {
     return getSigner(`${SCHEME}:dir:${this.secret}`)
   }
@@ -103,12 +79,7 @@ export class Room {
   }
 }
 
-/**
- * Encodes an invite as URL fragment parameters, without the leading `#`.
- *
- * The caller decides the rest of the URL. It must stay a fragment: a query string is sent to the
- * gateway serving the app, so the room key would land in its access log and in `Referer`.
- */
+/** Encodes an invite as URL fragment parameters, without `#`. Keep it a fragment: a query string reaches servers. */
 export function encodeRoomInvite(invite: RoomInvite): string {
   const params = new URLSearchParams({ v: INVITE_VERSION, k: invite.key, h: remove0x(invite.creator.toLowerCase()) })
 
@@ -119,11 +90,7 @@ export function encodeRoomInvite(invite: RoomInvite): string {
   return params.toString()
 }
 
-/**
- * Parses invite fragment parameters. Accepts the fragment with or without its leading `#`.
- *
- * @returns The invite, or `null` if the fragment does not hold a usable one.
- */
+/** Parses invite fragment parameters, with or without `#`; `null` if they hold no usable invite. */
 export function decodeRoomInvite(fragment: string): RoomInvite | null {
   const params = new URLSearchParams(fragment.startsWith('#') ? fragment.slice(1) : fragment)
 
