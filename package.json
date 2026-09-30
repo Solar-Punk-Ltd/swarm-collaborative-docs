@@ -52,10 +52,8 @@
     "depcheck": "depcheck .",
     "init:husky": "pnpm husky install"
   },
-  "dependencies": {
-    "@ethersphere/bee-js": "^13.1.0"
-  },
   "peerDependencies": {
+    "@ethersphere/bee-js": "^13.1.0",
     "y-webrtc": "^10.3.0",
     "yjs": "^13.6.0"
   },
@@ -67,6 +65,7 @@
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
+    "@ethersphere/bee-js": "^13.1.0",
     "@types/node": "^25.5.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
