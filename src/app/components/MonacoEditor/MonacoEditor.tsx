@@ -75,12 +75,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
       return
     }
 
-    bindingRef.current = new MonacoBinding(
-      yText,
-      model,
-      new Set([editorRef.current]),
-      undefined, // TODO: review awareness in case of y-webrtc
-    )
+    bindingRef.current = new MonacoBinding(yText, model, new Set([editorRef.current]), undefined)
 
     return () => {
       bindingRef.current?.destroy()
@@ -130,7 +125,6 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
       const prev = decorationsRef.current.get(address) ?? []
 
       if (cursor && cursor.scope !== undefined && cursor.scope !== filePathKey) {
-        // TODO: use createDecorationsCollection
         editorRef.current.deltaDecorations(prev, [])
         decorationsRef.current.delete(address)
 

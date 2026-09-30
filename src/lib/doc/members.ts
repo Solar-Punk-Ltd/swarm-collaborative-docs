@@ -1,3 +1,4 @@
+import type { FeedReader } from '@ethersphere/bee-js'
 import { Bee, FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
 
 import { AnnouncePayload, DirectoryPayload, IMembers, MemberEntry, PeerConnectionState } from '../interfaces'
@@ -11,52 +12,20 @@ import { Room } from '../utils/room'
 
 const TAG = 'Members'
 const MAX_WRITE_RETRIES = 3
-/** Announce feeds visited in one read. Bounds the crawl on a room that has seen many identities. */
+// Announce feeds visited per read, bounding the crawl.
 const MAX_CRAWL_IDENTITIES = 32
 const REFRESH_COOLDOWN_MS = 60_000
-/*
- * Two writers that collide on an index would otherwise both move to the next one and collide
- * again, since each is driven by the same verify-then-retry loop. A random pause breaks the step.
- */
+// Random pause, so two writers that collided on an index do not collide again on the next.
 const WRITE_RETRY_JITTER_MS = 400
 
 function retryJitter(): number {
   return Math.floor(Math.random() * WRITE_RETRY_JITTER_MS)
 }
 
-/* Structural, so it survives bee-js accessor churn. */
-interface FeedReader {
-  downloadPayload(options?: { index: FeedIndex }): Promise<{ payload: { toUtf8(): string }; feedIndex: FeedIndex }>
-}
-
 /*
- * Discovery used to run through one feed that every participant wrote, its key derived from the
- * room topic. Two costs followed from that and both were fatal in practice: knowing the topic was
- * enough to rewrite the roster, and every writer republished the whole list from its own copy, so
- * a peer that merged from a list read before someone joined silently deleted them.
- *
- * Now each identity owns one announce feed holding its own sessions and writes nothing else into
- * it. The feed is owned and signed by the identity itself, not by a key derived from the room
- * secret, so a member is not merely expected to stay out of another's feed — Swarm's single-owner
- * rule means it cannot write one. Losing another member's entry is impossible, and so is
- * publishing sessions in their name.
- *
- * One shared feed remains, and it has to: an announce feed is addressed from its identity, so an
- * identity nobody has heard of has no address anyone could poll, and a member already in the room
- * would never learn that someone new arrived. The directory feed carries that and only that — an
- * append-only log naming identities. Its entries are never rewritten, so a lost race costs an
- * index and a retry rather than deleting what was already listed, which is the whole of what went
- * wrong before. Announce payloads repeat the identities their writer knows, giving a second path
- * to the same information when a directory index is stuck behind a failed read.
- *
- * What the directory cannot do is tell a real identity from an invented one: any key holder may
- * append. A junk entry costs readers a feed that never answers, and is filtered only by never
- * yielding a readable announce payload.
- *
- * Two tabs of one identity share an announce feed, so they can still collide. That is contained
- * rather than solved: the payload at stake is that identity's own session list, the loser adopts
- * whatever the winner wrote and retries at the next index, and the tabs republish continuously.
- * A per-browser writer election would remove it entirely.
+ * Each identity owns an announce feed listing its sessions, signed by the identity so nobody else can write it.
+ * The directory feed, appendable by every key holder, only names identities, so members learn about newcomers.
+ * Two tabs of one identity can still collide on their announce feed; the loser adopts the winner's entry and retries.
  */
 export class Members implements IMembers {
   private readonly bee: Bee
@@ -95,10 +64,6 @@ export class Members implements IMembers {
   private readonly indices: Map<string, bigint> = new Map()
   private readonly connStates: Map<string, PeerConnectionState> = new Map()
 
-  /**
-   * @param identitySigner The user's own identity key. It signs this identity's announce feed, so
-   * only the holder of the key can publish sessions under that identity.
-   */
   constructor(room: Room, identitySigner: PrivateKey, beeUrl: string, stamp: string) {
     this.room = room
     this.identity = remove0x(identitySigner.publicKey().address().toString().toLowerCase())
@@ -161,13 +126,7 @@ export class Members implements IMembers {
     return new Map(this.connStates)
   }
 
-  /**
-   * Reads the room directory, then every announce feed it names, and merges what they hold.
-   *
-   * Reads are by explicit index rather than by asking Bee for a feed's latest update: that lookup
-   * probes with a one-second timeout and counts a slow probe as a miss, so on a loaded node it
-   * reports a head below the real one — long enough for a peer that just joined to go unnoticed.
-   */
+  // By explicit index: Bee's latest-update lookup under-reports on a loaded node and would hide a new peer.
   async read(): Promise<Map<string, MemberEntry> | null> {
     await this.readDirectory()
 
@@ -194,8 +153,7 @@ export class Members implements IMembers {
   async add(address: string, entry: MemberEntry): Promise<Map<string, MemberEntry>> {
     this.ownSessions.set(remove0x(address.toLowerCase()), entry)
 
-    // Listed before announcing: a member already in the room polls the directory to learn that
-    // this identity exists, and nothing else would tell them an announce feed is worth reading.
+    // Listed before announcing: the directory is how existing members learn this identity exists.
     await this.readDirectory()
     await this.listUnlistedIdentities()
     await this.publish()
@@ -222,12 +180,7 @@ export class Members implements IMembers {
     return new Map([...this.roster, ...this.ownSessions])
   }
 
-  /*
-   * Every entry matters here, unlike the announce feeds: the directory is an append-only log of
-   * identities and the newest entry names only the identities its writer added. `drainFeed` reports
-   * each one as it is read, and the cursor never moves over an index that was not read, so an entry
-   * a peer has not written yet is waited on rather than stepped past.
-   */
+  // Every directory entry counts, not just the newest: each names only the identities its writer added.
   private async readDirectory(): Promise<void> {
     const reader = this.bee.feed.makeReader(this.topic, this.directoryAddress)
 
@@ -258,12 +211,7 @@ export class Members implements IMembers {
     }
   }
 
-  /*
-   * Adds anything known but not listed, which is both this session's own first join and a repair:
-   * an identity learnt from another member's `known` list but missing from the directory would
-   * otherwise stay invisible to everyone who has only ever read the directory. The own-identity
-   * case is not rate limited, because it is the join path and a member nobody can see is useless.
-   */
+  // Lists known but unlisted identities: our own on join (never rate limited), and repairs for others.
   private async listUnlistedIdentities(): Promise<void> {
     const missing = Array.from(this.knownIdentities).filter(identity => !this.listedIdentities.has(identity))
 
@@ -290,8 +238,7 @@ export class Members implements IMembers {
 
     for (let attempt = 1; attempt <= MAX_WRITE_RETRIES; attempt++) {
       const nextIndex = this.directoryIndex + 1n
-      // Claim the index before the upload and keep it claimed if the upload throws: a failed write
-      // may still have stored its chunk, and reusing the index would put a second one there.
+      // Claimed before the upload and kept on failure: a failed write may still have stored its chunk.
       this.directoryIndex = nextIndex
 
       try {
@@ -383,8 +330,7 @@ export class Members implements IMembers {
       const key = remove0x(address.toLowerCase())
       const previous = this.roster.get(key)
 
-      // `lastSeen` only ever moves forward on a writer's own feed, so it orders their own writes;
-      // there is no second writer to order against.
+      // `lastSeen` only moves forward on its writer's own feed, so it orders that writer's entries.
       if (key !== '' && !this.ownSessions.has(key) && (!previous || entry.lastSeen >= previous.lastSeen)) {
         this.roster.set(key, entry)
       }
@@ -416,12 +362,7 @@ export class Members implements IMembers {
     }
   }
 
-  /*
-   * The `known` list in an announce payload is a snapshot of what its writer knew when it wrote,
-   * so it goes stale as the room grows. It is a second path to the same identities the directory
-   * feed carries, useful when a directory index is stuck behind a failed read, and it is worth
-   * keeping fresh — but only at one feed write per interval, however fast the room widens.
-   */
+  // Republishes our `known` list once it has grown, at most once per cooldown.
   private async republishDirectoryIfStale(): Promise<void> {
     if (this.ownSessions.size === 0 || this.knownIdentities.size <= this.publishedKnownCount) return
 
@@ -453,8 +394,7 @@ export class Members implements IMembers {
       }
 
       const nextIndex = this.ownIndex + 1n
-      // Claim the index before the upload and keep it claimed if the upload throws: a failed write
-      // may still have stored its chunk, and reusing the index would put a second one there.
+      // Claimed before the upload and kept on failure: a failed write may still have stored its chunk.
       this.ownIndex = nextIndex
 
       try {
@@ -473,8 +413,7 @@ export class Members implements IMembers {
       if (verified.status === 'ok') {
         const written = verified.payload.sessions ?? {}
 
-        // Another tab of this identity may have taken the index. Adopt whatever it wrote before
-        // retrying, so this node's next payload carries its sessions instead of dropping them.
+        // Another tab of this identity may have taken the index: adopt its sessions before retrying.
         for (const [address, entry] of Object.entries(written)) {
           if (!this.ownSessions.has(address)) this.ownSessions.set(address, entry)
         }
@@ -511,8 +450,7 @@ export class Members implements IMembers {
     this.logger.debug(`${TAG} own announce feed tail resolved at index ${this.ownIndex}`)
   }
 
-  // Bee's own feed lookup. A miss means an empty feed; an error means the lookup itself is
-  // unavailable, and the forward walk from index 0 answers the question without it.
+  // Bee's head lookup; `null` on a miss or error, and the forward walk takes over.
   private async latestIndex(reader: FeedReader): Promise<bigint | null> {
     try {
       return (await reader.downloadPayload()).feedIndex.toBigInt()

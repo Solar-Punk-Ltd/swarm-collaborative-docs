@@ -30,19 +30,10 @@ const DEBOUNCE_MS = 500
 const DEFAULT_MEMBER_LIST_POLL_INTERVAL_MS = 5000
 const DISCONNECTED_MEMBER_POLL_INTERVAL_MS = 15000
 const MIN_TTL_WARN_DAYS = 2
-/*
- * How long the document waits for peers that were present at startup but whose state has not
- * arrived. A peer that is simply gone would otherwise hold the document shut forever, so the wait
- * has to end; ending it too early is what hands the author a fragment to edit.
- *
- * Sized against the retries that can still rescue it rather than against a feel: the disconnected
- * poll runs every 15 s and a data channel opening triggers a fetch of its own, so this covers two
- * poll passes and most handshakes. A feed poisoned by a failed read stays unreadable for about a
- * minute, and waiting that long before allowing a keystroke is worse than opening incomplete —
- * which is why the count of peers still owing state stays visible afterwards.
- */
+// Wait for startup peers that owe state before opening anyway: two disconnected polls and most handshakes.
 const SYNC_GRACE_MS = 30000
 
+/** Collaborative Yjs document persisted on Swarm, synced to peers through a `DocTransport`. */
 export class SwarmDoc implements ISwarmDoc {
   public readonly doc: Y.Doc
   private errorHandler = ErrorHandler.getInstance()
@@ -144,9 +135,7 @@ export class SwarmDoc implements ISwarmDoc {
       this.resolvePendingSync(address)
     }
 
-    // Dialled regardless of `live`: the flag is last-write-wins shared state, and a stale retire
-    // (a reload reuses the session id, so its retire can land after the new instance's add) would
-    // otherwise strand the peer for good. Transports ignore a peer that already has a connection.
+    // Dialled regardless of `live`: a stale retire (a reload reuses the session id) would strand the peer.
     this.transport.connectToPeer(address)
 
     if (isNew) {
@@ -263,8 +252,7 @@ export class SwarmDoc implements ISwarmDoc {
 
   private async publishSnapshot(capturedUpdates: Uint8Array[]): Promise<void> {
     try {
-      // Retried here rather than only at init, so a node that was unreachable at startup does not
-      // leave the session unable to publish for the rest of its life.
+      // Retried here too, so a node unreachable at init does not block publishing for good.
       await this.ensureOwnIndex()
 
       const snapshot = encode(Y.encodeStateAsUpdate(this.doc))
@@ -275,8 +263,7 @@ export class SwarmDoc implements ISwarmDoc {
         `${TAG} publishSnapshot → index: ${nextIndex}, snapshot: ${(snapshot.length * 0.75) | 0}B, delta: ${(delta.length * 0.75) | 0}B`,
       )
 
-      // Claim the index before the write and keep it claimed if the write throws: a failed upload
-      // may still have stored its chunk, and reusing the index would put a second one at that address.
+      // Claimed before the write and kept on failure: a failed upload may still have stored its chunk.
       this.ownIndex = nextIndex
       await this.docFeed.write(this.ownFeedTopic(), this.signer, FeedIndex.fromBigInt(nextIndex), snapshot)
 
@@ -318,8 +305,7 @@ export class SwarmDoc implements ISwarmDoc {
     }
     const [ownIndex] = await Promise.allSettled([this.initOwnIndex(), this.initMemberList()])
 
-    // Reported rather than swallowed: the document still opens and receives, but nothing it writes
-    // reaches Swarm until the feed position resolves, and a silent read-only session looks like sync.
+    // Reported: the document still works, but nothing reaches Swarm until the feed position resolves.
     if (ownIndex.status === 'rejected') {
       this.errorHandler.handleError(ownIndex.reason, `${TAG}.initOwnIndex`)
       this.emitter.emit(
@@ -334,11 +320,7 @@ export class SwarmDoc implements ISwarmDoc {
     this.startSyncWatch()
   }
 
-  /*
-   * A peer discovered at startup whose snapshot did not read yet still owes us part of the
-   * document. Editing before it arrives means typing into a fragment and merging the result into a
-   * version the author never saw, which is how a document silently loses content.
-   */
+  // Startup peers whose state has not arrived yet; editing before that merges into a fragment.
   private startSyncWatch(): void {
     for (const [address, entry] of this.members.all()) {
       if (address !== this.ownAddress && entry.live && this.members.lastIndex(address) < 0n) {
@@ -363,7 +345,7 @@ export class SwarmDoc implements ISwarmDoc {
     }, SYNC_GRACE_MS)
   }
 
-  /** Records that a peer no longer owes state, because it delivered some or is no longer live. */
+  // A peer no longer owes state: it delivered some or is no longer live.
   private resolvePendingSync(address: string): void {
     if (!this.pendingSync.delete(address)) {
       return
@@ -396,12 +378,7 @@ export class SwarmDoc implements ISwarmDoc {
     this.emitter.emit(DOC_EVENTS.DOC_SYNC_STATE, { synced: this.synced, pending: this.pendingSync.size })
   }
 
-  /*
-   * The tail is probed rather than drained: a session may be re-created against a feed it already
-   * wrote, and resolving the tail short would republish over an existing index, leaving two
-   * payloads at one chunk address that the node can no longer serve. A tail that cannot be
-   * determined blocks publishing instead of defaulting to 0 — guessing here is what corrupts a feed.
-   */
+  // Probed, never guessed: a tail resolved short would republish over an existing index.
   private async ensureOwnIndex(): Promise<void> {
     if (this.ownIndexResolved) {
       return
@@ -429,8 +406,7 @@ export class SwarmDoc implements ISwarmDoc {
   private async initMemberList(): Promise<void> {
     await this.members.add(this.ownAddress, this.ownEntry())
 
-    // Read straight after announcing rather than waiting for the first poll: discovery is what
-    // gates the whole handshake, and a peer found five seconds later is five seconds of latency.
+    // Read right after announcing, not on the first poll: discovery gates the handshake.
     const membersList = (await this.members.read()) ?? new Map()
 
     for (const [addr, entry] of membersList) {
@@ -496,8 +472,7 @@ export class SwarmDoc implements ISwarmDoc {
       return
     }
 
-    // A gap means we never saw the updates in between; Yjs would park this delta as pending,
-    // so take the peer's full snapshot instead.
+    // A gap means missed updates, which Yjs would park as pending; take the full snapshot instead.
     if (targetIndex > lastKnown + 1n) {
       this.logger.debug(
         `${TAG} applyDelta: ${memberAddress.slice(0, 8)}… gap lastKnown=${lastKnown} target=${targetIndex}, fetching snapshot`,
@@ -584,11 +559,7 @@ export class SwarmDoc implements ISwarmDoc {
     }, DEFAULT_MEMBER_LIST_POLL_INTERVAL_MS)
   }
 
-  /**
-   * A peer's snapshot feed is otherwise read once, when it is first seen. Until a data channel
-   * is up — which can take tens of seconds over Swarm signalling, or never — anything the peer
-   * writes after that would be missed entirely.
-   */
+  // Re-reads the feeds of peers without a channel; otherwise their writes are read only once.
   private startDisconnectedMemberPoll(): void {
     this.disconnectedPollTimer = setInterval(() => {
       const states = this.members.allConnectionStates()
@@ -601,8 +572,7 @@ export class SwarmDoc implements ISwarmDoc {
     }, DISCONNECTED_MEMBER_POLL_INTERVAL_MS)
   }
 
-  // A channel opening means the peer was unreachable until now — close the gap from their feed
-  // before relying on the channel, since deltas alone cannot fill it.
+  // A newly opened channel follows a gap that deltas cannot fill, so read the peer's feed first.
   private watchPeerStates(): void {
     this.emitter.on(DOC_EVENTS.PEER_STATE_UPDATED, (states: ReadonlyMap<string, PeerConnectionState>) => {
       for (const [addr, state] of states) {

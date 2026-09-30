@@ -325,8 +325,8 @@ and ICE only, never document data. y-webrtc owns Yjs sync and cross-tab Broadcas
 
 The server is not trusted with the room.
 
-- **Room name.** The y-webrtc room is named after `Room.rendezvous`, a digest of the secret with a purpose of its own. It
-  reveals no feed address.
+- **Room name.** The y-webrtc room is named after `Room.rendezvous`, a digest of the secret with a purpose of its own.
+  It reveals no feed address.
 - **Password.** The room is encrypted with a password derived from the key (`Room.transportSecret()`). The server relays
   ciphertext it cannot read, and a peer without the key cannot complete a handshake.
 - **Delta signatures.** This matters because deltas on this transport are y-webrtc's own sync messages, which carry no
@@ -349,14 +349,15 @@ The server is not trusted with the room.
 ## Using it
 
 ```bash
-pnpm add @solarpunkltd/swarm-collaborative-docs yjs
+pnpm add @solarpunkltd/swarm-collaborative-docs @ethersphere/bee-js yjs
 pnpm add y-webrtc # only with createSignalingServerTransport
 ```
 
-`yjs` is a required peer dependency and deliberately not bundled: every editor binding imports Yjs itself, and two Yjs
-instances in one page do not recognise each other's types or relative positions. `@ethersphere/bee-js` stays external
-for the same reason. The package is ESM-first and ships `.mjs`, `.cjs` and declarations; supported toolchains are
-bundlers (`moduleResolution: "bundler"`) and Node ≥ 22.12.
+`yjs` and `@ethersphere/bee-js` (13.x) are required peer dependencies and deliberately not bundled: every editor binding
+imports Yjs itself, and two Yjs instances in one page do not recognise each other's types or relative positions. An app
+that already talks to Bee shares its bee-js with the library instead of shipping a second copy. The package is ESM-first
+and ships `.mjs`, `.cjs` and declarations; supported toolchains are bundlers (`moduleResolution: "bundler"`) and Node ≥
+22.12.
 
 ```typescript
 const swarmDoc = new SwarmDoc({

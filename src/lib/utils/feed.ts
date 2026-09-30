@@ -1,25 +1,10 @@
 import { Logger } from './logger'
 
 /*
- * Shared index handling for the append-only feeds this library writes.
- *
- * Reading a feed means asking "is there an entry at index i?", and Bee answers that in a way that
- * is easy to misread. A chunk that was never written reads 404 only while retrieval still has peers
- * to ask; every failure puts a peer on a per-chunk skip list for a minute
- * (`pkg/retrieval/retrieval.go`, `errSkip`), and once they are all on it the same absent chunk
- * answers 500 instead, because `pkg/api/chunk.go` maps only `storage.ErrNotFound` to 404. Polling
- * the index a peer has not written yet therefore burns that address for a minute — including for
- * the moment the peer finally writes it.
- *
- * So a failed read means unknown: never present, never absent. The only positive evidence that an
- * index is genuinely stuck is a later index that reads. Stepping over one without that evidence
- * walks a reader past entries a peer has not written yet, which is how a WebRTC answer gets
- * discarded; counting it as present walks a tail resolution off the end of the feed.
- *
- * Writes must also never reuse an index: two payloads at one index are two single-owner chunks with
- * one address, which the node can then no longer serve. Where the two rules pull against each other
- * — resolving a feed's own tail — the tie goes to overshooting, which costs an unused index, rather
- * than undershooting, which destroys a chunk.
+ * Index handling for the append-only feeds this library writes. A failed read means unknown, never absent: once
+ * every retrieval peer has failed on a chunk, Bee answers 500 for it for a minute (`errSkip`), so polling an index
+ * too early makes it unreadable. Only a later readable index proves one is stuck. Writes never reuse an index,
+ * so resolving a tail errs towards overshooting.
  */
 
 const logger = Logger.getInstance()
@@ -30,27 +15,11 @@ export type FeedRead<T> = { status: 'ok'; payload: T } | { status: 'absent' } | 
 /** Indices consumed in one drain before the caller gets a turn. */
 const MAX_DRAIN_PER_READ = 20
 const MAX_TAIL_CONFIRM_STEPS = 64
-/*
- * A 500 says the node has given up on that address for about a minute, so asking again on the next
- * poll usually only adds load. The last delay repeats for as long as the index keeps failing.
- * Feeds whose next entry is being waited on — a signalling handshake — pass a shorter schedule:
- * there the wasted requests cost less than the delay in noticing the entry once it lands.
- */
+// Backoff after a failed read; the last delay repeats.
 const DEFAULT_PROBE_BACKOFF_MS = [5_000, 15_000, 30_000]
-/*
- * An index that reads 404 needs spacing of its own. Nothing is wrong with it — it is simply not
- * written yet — but asking again at the caller's poll rate is precisely what breaks it: every miss
- * puts one more retrieval peer on the skip list, and once they are all on it the address answers
- * 500 for about a minute. For an index somebody is about to write, that minute covers the moment
- * the entry lands. Shorter than the failure schedule, since a reader parked here is usually
- * waiting for that entry.
- */
+// Backoff after a 404: asking at the poll rate is what turns a not-yet-written index into a minute of 500s.
 const DEFAULT_ABSENT_BACKOFF_MS = [2_000, 6_000, 12_000]
-/*
- * Attempts before a drain spends an extra read proving that an index is stuck. The lookahead is
- * itself a read of a probably-absent chunk, so it is worth burning only once the index has failed
- * more than transiently.
- */
+// Failed attempts before a drain spends a read looking past an index.
 const LOOKAHEAD_AFTER_ATTEMPTS = 2
 
 function probeKey(owner: string, index: bigint): string {
@@ -82,11 +51,7 @@ export class FeedProbe {
     return at === undefined || Date.now() >= at
   }
 
-  /*
-   * Records a miss and returns how long this index is left alone for. The two kinds are counted
-   * apart: only a failure carries any suggestion that the index is stuck, so only its count may
-   * decide that a drain should spend a read looking past it.
-   */
+  // Counted per kind: only failures may trigger a lookahead.
   defer(owner: string, index: bigint, miss: ProbeMiss = 'failed'): { attempts: number; waitMs: number } {
     const key = probeKey(owner, index)
     const counts = miss === 'absent' ? this.absentAttempts : this.attempts
@@ -109,16 +74,7 @@ export class FeedProbe {
   }
 }
 
-/**
- * Reads forward from `from` and returns the newest payload found, with the index to resume at.
- *
- * Most feeds here carry their full state in each entry, so only the newest readable one matters.
- * `next` moves only over indices that were actually read, which is what keeps a reader parked in
- * front of an index a peer has not written yet instead of marching past it.
- *
- * @param onEntry Called for every entry read, for the append-only feeds whose older entries still
- * carry information the newest one does not repeat.
- */
+/** Reads forward from `from`; returns the newest payload and the index to resume at, never skipping an unread one. */
 export async function drainFeed<T>(
   read: (index: bigint) => Promise<FeedRead<T>>,
   from: bigint,
@@ -173,18 +129,7 @@ export async function drainFeed<T>(
   return { latest, next }
 }
 
-/**
- * Highest index present in a feed, or `-1n` for an empty one.
- *
- * The search is Bee's: one unindexed lookup walks the feed node-side. That answer is then confirmed
- * forward, because Bee's sequential finder probes with a hardcoded one-second timeout and counts a
- * timeout as a miss (`pkg/feeds/sequence/sequence.go`), so on a loaded node it reports a head below
- * the real one — and a head reported too low is what makes a writer overwrite a live index. On a
- * feed nobody wrote since, the confirmation is a single extra read.
- *
- * @param latest Bee's own lookup for the feed head; `null` when the feed holds nothing.
- * @param read Reads one index, used to confirm the head and to walk past a stale one.
- */
+/** Highest index in a feed, or `-1n`: Bee's head lookup, confirmed forward since it under-reports when loaded. */
 export async function resolveFeedTail<T>(
   latest: () => Promise<bigint | null>,
   read: (index: bigint) => Promise<FeedRead<T>>,
@@ -207,11 +152,7 @@ export async function resolveFeedTail<T>(
       if (beyond.status === 'ok') {
         tail = next + 1n
       } else {
-        /*
-         * Unknown, with nothing readable past it. Count it as written and stop: it may only be an
-         * absent chunk the node has stopped looking for, in which case this costs one unused index,
-         * where guessing the other way overwrites whatever is really there.
-         */
+        // Unknown with nothing past it: count it as written, since an unused index beats overwriting a chunk.
         logger.debug(`${label} index ${next} unreadable while resolving the tail — treating it as written`)
 
         return next

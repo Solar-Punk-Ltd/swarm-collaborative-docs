@@ -9,18 +9,7 @@ import { Logger } from '../utils/logger'
 
 const TAG = 'DocFeed'
 
-/**
- * Reads and writes per-user document snapshot feeds.
- *
- * Each peer owns one feed per room, identified by the room topic plus the peer's own address,
- * holding the peer's latest full `Y.Doc` state at every index. The feed index comes back from
- * Bee itself, so it is never stored inside the payload.
- *
- * Reads are by explicit index, except when resolving a feed's tail. An unindexed download runs
- * Bee's feed search, whose probes time out after one second each and count that as a miss, so it
- * under-reports on a loaded node — fine to start a tail resolution from, since that is confirmed
- * forward afterwards, and wrong for the polling path, where an under-report hides a peer's writes.
- */
+// Per-session snapshot feeds. Polls read by explicit index, since Bee's feed search under-reports when loaded.
 export class DocFeed implements IDocFeed {
   private readonly bee: Bee
   private readonly stamp: string
@@ -55,7 +44,6 @@ export class DocFeed implements IDocFeed {
     return latest
   }
 
-  /** Highest index present in a feed, or `-1n` if it holds nothing yet. */
   async resolveTail(topic: Topic, owner: string): Promise<bigint> {
     return await resolveFeedTail(
       () => this.latestIndex(topic, owner),
@@ -64,8 +52,7 @@ export class DocFeed implements IDocFeed {
     )
   }
 
-  // Bee's own feed lookup. A miss means an empty feed; an error means the lookup itself is
-  // unavailable, and the forward walk from index 0 answers the question without it.
+  // Bee's head lookup; `null` on a miss or error, and the forward walk takes over.
   private async latestIndex(topic: Topic, owner: string): Promise<bigint | null> {
     try {
       const reader = this.bee.feed.makeReader(topic, owner)

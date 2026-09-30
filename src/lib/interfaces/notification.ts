@@ -17,10 +17,7 @@ export interface JoinPayload extends BasePayload {
   type: 'join'
 }
 
-/**
- * Incremental document update. The delta MUST be accompanied by a secp256k1 signature;
- * unsigned or invalid deltas are dropped by receivers.
- */
+/** Incremental document update. Receivers drop a delta without a valid signature by `author`. */
 export interface DocPayload extends BasePayload {
   type: 'doc'
   /** Swarm doc-feed index written by the author for this update. */
@@ -31,13 +28,7 @@ export interface DocPayload extends BasePayload {
   sig?: string
 }
 
-/**
- * A peer's caret, as character offsets into one shared `Y.Text`.
- *
- * `scope` names which text the offsets belong to — the key passed to `Y.Doc.getText(name)`,
- * which in a multi-file document is the file path. Omit it for a single-text document;
- * a receiver showing a different scope should not draw the cursor.
- */
+/** Caret as offsets into one `Y.Text`; `scope` is its `getText` name, such as a file path. */
 export type CursorPosition = { anchor: number; head: number; scope?: string } | null
 
 /** Cursor-only awareness update. Sent on a ~500 ms timer, independent of doc edits. */

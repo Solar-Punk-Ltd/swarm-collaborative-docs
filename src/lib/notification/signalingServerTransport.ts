@@ -51,8 +51,7 @@ class SignalingServerTransport implements DocTransport {
     })
   }
 
-  // y-webrtc is an optional peer dependency, so it is resolved at start rather than at import:
-  // a consumer on createSwarmRtcTransport must never be forced to bundle it.
+  // Imported on start: y-webrtc is an optional peer dependency, not needed for swarm-rtc.
   private async init(): Promise<void> {
     const { WebrtcProvider } = await import('y-webrtc')
 
@@ -179,38 +178,14 @@ class SignalingServerTransport implements DocTransport {
 
 /** Configuration for {@link createSignalingServerTransport}. */
 export interface SignalingServerOptions {
-  /**
-   * WebSocket URL of a y-webrtc signaling server you run (`ws://` or `wss://`). Required —
-   * the library ships no default, so a session can never silently point at a server that
-   * does not exist.
-   */
+  /** `ws://` or `wss://` URL of a y-webrtc signaling server you run. Required, no default. */
   signalingUrl: string
 
-  /**
-   * ICE servers used for every peer connection. Required — the library ships no default,
-   * so connectivity is always a deliberate choice of the integrator.
-   */
+  /** ICE servers for every connection. Required, no default. */
   iceServers: RTCIceServer[]
 }
 
-/**
- * Creates a `DocTransportFactory` that discovers peers through a WebSocket signaling server.
- *
- * Establishes WebRTC data channels via y-webrtc. Peer discovery is automatic through the
- * y-webrtc `awareness` protocol — no explicit `connectToPeer` calls are needed. New peers are
- * surfaced via `deps.onPeerDiscovered`, triggering a Swarm snapshot fetch for any history
- * written while the peer was offline.
- *
- * `subscribe` and `publish` are no-ops — y-webrtc handles Yjs sync and cross-tab
- * BroadcastChannel internally.
- *
- * Requires the optional peer dependency `y-webrtc`, loaded on `start()`. Choose this transport
- * when you operate the signaling server; choose `createSwarmRtcTransport` when you want no
- * server at all.
- *
- * @param options Must supply both `signalingUrl` and `iceServers`; neither has a default.
- * @throws If either option is missing or carries the wrong URL scheme.
- */
+/** WebRTC transport through a y-webrtc signaling server you run; needs `y-webrtc`. Throws on invalid options. */
 export function createSignalingServerTransport(options: SignalingServerOptions): DocTransportFactory {
   const signalingUrl = assertSignalingUrl('createSignalingServerTransport', options?.signalingUrl)
   const iceServers = assertIceServers('createSignalingServerTransport', options?.iceServers)
