@@ -50,12 +50,12 @@ lost entries in precisely that way — every writer republished the whole list f
 
 Two different kinds of key sign those feeds, and the difference between them is the whole security story.
 
-- **Room-derived keys** sign the directory and every announce feed. They are computed from the room secret alone, so
-  everyone in the room can write them. That is what makes a shared directory work without a coordinator, and it also
-  means any member can forge an entry there — claim a session that is not theirs, or list someone who never joined.
-  Membership is trust-on-first-use.
-- **Identity-derived keys** sign the snapshot and signal feeds. A session's signing key comes from the member's own
-  private key plus its `sessionId`, and the room secret cannot produce it. Swarm feeds are single-owner: a node accepts
+- **A room-derived key** signs the directory. It is computed from the room secret alone, so everyone in the room can
+  write it. That is what makes a shared directory work without a coordinator, and it also means any member can forge an
+  entry there — list an identity that never joined. Membership is trust-on-first-use.
+- **Identity keys** sign everything else. An announce feed is signed by the identity it describes, so nobody can publish
+  sessions in someone else's name. Snapshot and signal feeds are signed by a session key derived from the member's own
+  private key plus its `sessionId`; the room secret cannot produce either. Swarm feeds are single-owner: a node accepts
   an update only if the feed's owner signed it. So nobody — not another member, not the gateway — can write into your
   snapshot feed or alter what you already put there. Deltas sent over WebRTC carry a signature checked against the
   sender's session address, so the same holds on the fast path.
@@ -125,6 +125,7 @@ ever done, for as long as the stamps keep the chunks alive.
 | ------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | Anyone holding the room key     | everything: the member list, every identity address, the full document and its history                  |
 | The Bee node or gateway you use | the same, plus your IP address — it stores the chunks, serves the reads, and every payload is plaintext |
+| A y-webrtc signaling server     | your IP address and an opaque room name; the traffic it relays is encrypted with a room-derived key     |
 | Swarm nodes storing your chunks | the raw bytes. A chunk lands in whichever neighbourhood its address falls in, in the clear              |
 | Anyone else                     | nothing they can locate — feed addresses are hashes of the room secret, so there is nothing to ask for  |
 
@@ -322,6 +323,15 @@ and ICE only, never document data. y-webrtc owns Yjs sync and cross-tab Broadcas
 `Y.Awareness`. Takes `signalingUrl` and `iceServers`. `y-webrtc` is an optional peer dependency, resolved by dynamic
 `import()` on `start()`, so a missing package surfaces as `DOC_ERROR` rather than breaking a build.
 
+The server is not trusted with the room.
+
+- **Room name.** The y-webrtc room is named after `Room.rendezvous`, a digest of the secret with a purpose of its own. It
+  reveals no feed address.
+- **Password.** The room is encrypted with a password derived from the key (`Room.transportSecret()`). The server relays
+  ciphertext it cannot read, and a peer without the key cannot complete a handshake.
+- **Delta signatures.** This matters because deltas on this transport are y-webrtc's own sync messages, which carry no
+  signature. The password is what keeps outsiders from joining and injecting edits.
+
 |                          | SwarmRtc ✓ | Signaling server |
 | ------------------------ | :--------: | :--------------: |
 | No server to operate     |     ✓      |        ✗         |
@@ -420,8 +430,9 @@ that link is what grants access, not the room id shown beside it.
   can read all of it.
 - **Bearer access.** The room key is the only credential — no per-person access, no revocation, and no verified link
   between a session and the identity it claims.
-- **Forgeable membership.** Any key holder can write the directory and any announce feed. Document content is
-  unaffected: snapshot feeds and deltas are signed by identity-derived keys.
+- **Forgeable membership.** Any key holder can write the directory, so it can name identities that never joined — or
+  bury real ones behind the crawl limit below. Announce feeds, snapshot feeds and deltas are unaffected: each is signed
+  by its own identity or session key.
 - **Room size.** A member-list pass reads the announce feeds of the first 32 identities it knows, in a stable order, so
   a room that grows past that leaves the later ones permanently unread
   ([`MAX_CRAWL_IDENTITIES`](src/lib/doc/members.ts)). The mesh is full on top of that — every session dials and polls

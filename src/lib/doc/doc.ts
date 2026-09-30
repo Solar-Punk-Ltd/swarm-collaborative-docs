@@ -119,6 +119,8 @@ export class SwarmDoc implements ISwarmDoc {
         this.fetchLatestFromMember(address)
       },
       docFeedId: this.docFeedId,
+      rendezvous: this.room.rendezvous,
+      transportSecret: this.room.transportSecret(),
       beeApiUrl: this.beeApiUrl,
       signer: this.signer,
       stampId: this.stampId,

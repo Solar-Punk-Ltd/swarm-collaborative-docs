@@ -52,6 +52,8 @@ export class Room {
   public readonly id: string
   /** Prefix for every feed id in this room. */
   public readonly namespace: string
+  /** Name a transport meets its peers under, such as a signaling-server room. */
+  public readonly rendezvous: string
 
   private readonly secret: string
 
@@ -60,7 +62,16 @@ export class Room {
     this.creator = creator ? remove0x(creator.toLowerCase()) : null
     this.secret = key.trim().toLowerCase()
     this.namespace = this.digest('ns')
+    this.rendezvous = this.digest('rv')
     this.id = this.digest('id').slice(0, DISPLAY_ID_CHARS)
+  }
+
+  /**
+   * Secret a transport encrypts its signaling with, so a server relaying it can neither read the
+   * traffic nor join the room. It never leaves the client.
+   */
+  transportSecret(): string {
+    return this.digest('rtc')
   }
 
   /**

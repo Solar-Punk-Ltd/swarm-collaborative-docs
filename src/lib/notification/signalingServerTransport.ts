@@ -58,10 +58,11 @@ class SignalingServerTransport implements DocTransport {
 
     if (this.stopped) return
 
-    const room = this.deps.docFeedId
+    const room = this.deps.rendezvous
 
     this.provider = new WebrtcProvider(room, this.deps.doc, {
       signaling: [this.signalingUrl],
+      password: this.deps.transportSecret,
       peerOpts: { config: { iceServers: this.iceServers } },
     })
 

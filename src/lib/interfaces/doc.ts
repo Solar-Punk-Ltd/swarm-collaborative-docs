@@ -89,8 +89,12 @@ export interface DocTransportDeps {
   nickname: string
   /** Called when the transport discovers a peer not yet in the member set. */
   onPeerDiscovered: (address: string, entry: MemberEntry) => void
-  /** Topic namespace used to derive per-user Swarm feed identifiers. */
+  /** Topic namespace used to derive per-user Swarm feed identifiers. Never send it to a server. */
   docFeedId: string
+  /** Name to meet peers under on shared infrastructure, such as a signaling server. Reveals no feed address. */
+  rendezvous: string
+  /** Room-derived secret for encrypting signaling traffic. It must never leave the client. */
+  transportSecret: string
   /** Bee node HTTP API URL. */
   beeApiUrl: string
   /** secp256k1 private key for signing Swarm feed writes. */

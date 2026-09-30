@@ -12,5 +12,5 @@ node_modules/
 !.env.development
 dist
 
-docs/remix.md
+docs/*.md
 CLAUDE.md

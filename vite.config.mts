@@ -24,7 +24,7 @@ export default defineConfig(({ mode }) => {
       formats: ['es', 'cjs'],
       fileName: format => `${APP_NAME}.${format === 'es' ? 'mjs' : 'cjs'}`,
     }
-    pluginOptions.push(dts({ insertTypesEntry: true }))
+    pluginOptions.push(dts({ insertTypesEntry: true, tsconfigPath: './tsconfig.lib.json' }))
   }
 
   const rollupOptions = isLibBuild ? { external: ['@ethersphere/bee-js', 'yjs', 'y-webrtc'] } : {}
@@ -44,7 +44,7 @@ export default defineConfig(({ mode }) => {
       lib: libOptions,
       rollupOptions,
     },
-    publicDir: 'public',
+    publicDir: isLibBuild ? false : 'public',
     server: {
       port: DEFAULT_VITE_DEV_PORT,
       open: true,
