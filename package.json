@@ -1,6 +1,6 @@
 {
   "name": "@solarpunkltd/swarm-collaborative-docs",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Real-time collaborative Yjs documents persisted on Swarm, with WebRTC peer sync",
   "author": "solarpunkltd",
   "license": "Apache-2.0",
@@ -50,7 +50,7 @@
     "check:types": "tsc -p tsconfig.lib.json --noEmit",
     "check:types:app": "tsc -p tsconfig.json --noEmit",
     "depcheck": "depcheck .",
-    "init:husky": "pnpm husky install"
+    "prepare": "husky"
   },
   "peerDependencies": {
     "@ethersphere/bee-js": "^13.1.0",
