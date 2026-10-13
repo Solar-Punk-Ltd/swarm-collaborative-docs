@@ -1,4 +1,4 @@
-import { Bee, Bytes, PrivateKey } from '@ethersphere/bee-js'
+import { Bee, BeeResponseError, Bytes, PrivateKey } from '@ethersphere/bee-js'
 
 import { remove0x } from './common'
 
@@ -29,24 +29,36 @@ export function isNotFoundError(error: unknown): boolean {
 }
 
 const MIN_TTL_WARN_DAYS = 2
+const GATEWAY_RESTRICTED_STATUSES = [401, 403, 404, 405]
 
-/** Throws unless `stamp` is a usable batch on the node; calls `onWarn` when under `ttl` days remain. */
+/**
+ * Throws if the node lists its batches and `stamp` is not usable there. Calls `onWarn` instead when no stamp is set
+ * or the node does not expose `/stamps` (a gateway attaching its own stamp), and when under `ttl` days remain.
+ */
 export async function validateStamps(
   beeUrl: string,
-  stamp: string,
+  stamp: string | undefined,
   ttl: number = MIN_TTL_WARN_DAYS,
   onWarn?: (msg: string) => void,
 ): Promise<void> {
   if (!stamp) {
-    throw new Error(
-      'A postage batch ID is required — every participant writes their own Swarm feed. ' +
-        'Buy a batch on the Bee node you write through (its wallet needs xBZZ and xDAI), ' +
-        'or point `infra.beeUrl` at a node that already has one.',
-    )
+    onWarn?.(`No postage batch set: writes rely on ${beeUrl} attaching its own stamp.`)
+
+    return
   }
 
   const bee = new Bee(beeUrl)
-  const batches = await bee.stamp.getAll()
+  const batches = await bee.stamp.getAll().catch((err: unknown) => {
+    if (err instanceof BeeResponseError && GATEWAY_RESTRICTED_STATUSES.includes(err.status ?? 0)) return null
+    throw err
+  })
+
+  if (!batches) {
+    onWarn?.(`${beeUrl} does not expose /stamps (a gateway?): postage batch "${stamp}" was not verified.`)
+
+    return
+  }
+
   const usable = batches.filter(s => s.usable)
 
   const found = usable.find(s => s.batchID.toString() === stamp)

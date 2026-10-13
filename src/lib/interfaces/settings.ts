@@ -15,8 +15,11 @@ export interface DocSettings {
   infra: {
     /** Bee node HTTP API URL (e.g. `"http://localhost:1633"`). */
     beeUrl: string
-    /** Postage batch for every write. Required and must be usable on `beeUrl`; checked on `start()`. */
-    stamp: string
+    /**
+     * Postage batch for every write, checked on `start()`. Omit it when `beeUrl` is a gateway that attaches its own
+     * stamp. A failed check is reported as `DOC_ERROR` and does not stop the document.
+     */
+    stamp?: string
     /** Room secret. Whoever holds it can read and write the room. Mint one with `createRoomKey`. */
     roomKey: string
     /** Creator's identity from the invite; a head start for member discovery. */

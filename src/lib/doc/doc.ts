@@ -1,4 +1,4 @@
-import { FeedIndex, PrivateKey, Signature, Topic } from '@ethersphere/bee-js'
+import { FeedIndex, NULL_STAMP, PrivateKey, Signature, Topic } from '@ethersphere/bee-js'
 import * as Y from 'yjs'
 
 import {
@@ -51,6 +51,7 @@ export class SwarmDoc implements ISwarmDoc {
   private docTopic: string
   private transport: DocTransport
   private beeApiUrl: string
+  private configuredStamp: string | undefined
   private stampId: string
   private members: IMembers
   private docFeed: IDocFeed
@@ -82,7 +83,8 @@ export class SwarmDoc implements ISwarmDoc {
     this.ownAddress = this.signer.publicKey().address().toString()
     this.username = settings.user.nickname
     this.beeApiUrl = settings.infra.beeUrl
-    this.stampId = settings.infra.stamp
+    this.configuredStamp = settings.infra.stamp
+    this.stampId = settings.infra.stamp || NULL_STAMP.toHex()
 
     this.room = new Room(settings.infra.roomKey, settings.infra.roomCreator)
 
@@ -293,15 +295,13 @@ export class SwarmDoc implements ISwarmDoc {
 
   private async init(): Promise<void> {
     try {
-      await validateStamps(this.beeApiUrl, this.stampId, MIN_TTL_WARN_DAYS, msg => {
+      await validateStamps(this.beeApiUrl, this.configuredStamp, MIN_TTL_WARN_DAYS, msg => {
         this.logger.warn(`${TAG} ${msg}`)
         this.emitter.emit(DOC_EVENTS.DOC_ERROR, new Error(msg))
       })
     } catch (err) {
       this.errorHandler.handleError(err, `${TAG}.validateStamps`)
       this.emitter.emit(DOC_EVENTS.DOC_ERROR, err)
-
-      return
     }
     const [ownIndex] = await Promise.allSettled([this.initOwnIndex(), this.initMemberList()])
 

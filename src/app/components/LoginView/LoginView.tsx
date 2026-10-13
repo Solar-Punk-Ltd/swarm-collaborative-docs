@@ -276,13 +276,13 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   value={stamp}
                   onChange={e => onStampChange(e.target.value)}
                   onBlur={() => localStorage.setItem(STAMP_KEY, stamp)}
-                  placeholder="required — a usable postage batch ID"
+                  placeholder="a usable postage batch ID — leave empty for a gateway"
                   className="login-view__field-input login-view__field-input--mono"
                 />
                 {!stamp && (
                   <span className="login-view__stamp-warning">
                     <AlertTriangle size={12} />
-                    Required — every participant writes their own feed
+                    Empty — only works through a gateway that attaches its own stamp
                   </span>
                 )}
               </div>
