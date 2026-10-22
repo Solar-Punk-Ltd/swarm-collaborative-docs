@@ -208,6 +208,10 @@ Two paths keep a peer's state arriving when the channel does not:
 - every 15 s, the snapshot feed of every peer without an open channel is re-read;
 - a channel opening triggers an immediate re-read, because everything written before it opened is missing by definition.
 
+A re-read downloads at most one snapshot. Every entry is a whole state, so one-chunk probes find the peer's newest entry
+and only that one is fetched. The first read of a feed, and a read that falls 64 or more entries behind, start from
+Bee's head lookup rather than walking the feed from the start.
+
 ### Presence and cursors
 
 Cursor positions are broadcast on a 500 ms timer as their own payload, never on the document path, and surface as

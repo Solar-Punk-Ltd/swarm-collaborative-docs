@@ -82,11 +82,12 @@ export async function drainFeed<T>(
   probe: FeedProbe,
   label: string,
   onEntry?: (payload: T, index: bigint) => void,
+  limit: number = MAX_DRAIN_PER_READ,
 ): Promise<{ latest: T | null; next: bigint }> {
   let next = from < 0n ? 0n : from
   let latest: T | null = null
 
-  for (let i = 0; i < MAX_DRAIN_PER_READ; i++) {
+  for (let i = 0; i < limit; i++) {
     if (!probe.ready(owner, next)) break
 
     const result = await read(next)

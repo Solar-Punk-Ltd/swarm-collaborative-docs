@@ -22,7 +22,7 @@ export interface IDocFeed {
   /** Reads `owner`'s snapshot at exactly `index`. Returns `null` if that index does not exist. */
   read(topic: Topic, owner: string, index: FeedIndex): Promise<DocFeedEntry | null>
 
-  /** `owner`'s newest snapshot at or after `fromIndex`, or `null` if nothing is readable from there. */
+  /** `owner`'s newest snapshot at or after `fromIndex`, or `null` if nothing is readable from there. Downloads only it. */
   readLatestFrom(topic: Topic, owner: string, fromIndex: bigint): Promise<DocFeedEntry | null>
 
   /** Highest index present in `owner`'s feed, or `-1n` if it holds nothing yet. */
