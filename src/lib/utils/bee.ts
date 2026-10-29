@@ -16,16 +16,9 @@ export function deriveSessionSigner(privateKeyHex: string, sessionId: string): P
   return getSigner(`swarmdoc-session:v1:${remove0x(privateKeyHex)}:${sessionId}`)
 }
 
-/** Returns `true` if `error` represents an HTTP 404 / Not Found response from a Bee node. */
+/** `true` for an HTTP 404 from Bee, read from the status: a message or stack can contain "404" for other reasons. */
 export function isNotFoundError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-
-  return (
-    error.message?.includes('Not Found') ||
-    error.message?.includes('404') ||
-    (error as { stack?: string }).stack?.includes('404') ||
-    false
-  )
+  return error instanceof BeeResponseError && error.status === 404
 }
 
 const MIN_TTL_WARN_DAYS = 2
