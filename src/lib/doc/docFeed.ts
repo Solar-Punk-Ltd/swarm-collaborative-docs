@@ -1,29 +1,25 @@
-import { Bee, FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
+import { Bytes, Topic } from '@ethersphere/bee-js'
 
-import { DocFeedEntry, DocFeedRecord, IDocFeed } from '../interfaces'
-import { isNotFoundError } from '../utils/bee'
-import { API_VERSION, DEFERRED_FEED_UPLOAD } from '../utils/constants'
+import { DocFeedEntry, DocFeedRecord, IDocFeed, StorageRead, SwarmStorage } from '../interfaces'
+import { API_VERSION } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
 import { drainFeed, FeedProbe, FeedRead, resolveFeedTail } from '../utils/feed'
-import { Logger } from '../utils/logger'
 
 const TAG = 'DocFeed'
 
-// Per-session snapshot feeds. Polls read by explicit index, since Bee's feed search under-reports when loaded.
+// Per-session snapshot feeds, owned by the session's identity. Polls read by explicit index, since Bee's feed search
+// under-reports when loaded.
 export class DocFeed implements IDocFeed {
-  private readonly bee: Bee
-  private readonly stamp: string
+  private readonly storage: SwarmStorage
   private readonly errorHandler = ErrorHandler.getInstance()
-  private readonly logger = Logger.getInstance()
   private readonly probe = new FeedProbe()
 
-  constructor(beeUrl: string, stamp: string) {
-    this.bee = new Bee(beeUrl)
-    this.stamp = stamp
+  constructor(storage: SwarmStorage) {
+    this.storage = storage
   }
 
-  async read(topic: Topic, owner: string, index: FeedIndex): Promise<DocFeedEntry | null> {
-    const result = await this.readIndex(topic, owner, index.toBigInt())
+  async read(topic: Topic, owner: string, index: bigint): Promise<DocFeedEntry | null> {
+    const result = await this.readIndex(topic, owner, index)
 
     if (result.status === 'failed') {
       this.errorHandler.handleError(result.error, `${TAG}.read(${owner.slice(0, 8)}…)`)
@@ -36,7 +32,7 @@ export class DocFeed implements IDocFeed {
     const { latest } = await drainFeed(
       index => this.readIndex(topic, owner, index),
       fromIndex,
-      owner,
+      probeKey(topic, owner),
       this.probe,
       `${TAG} ${owner.slice(0, 8)}…`,
     )
@@ -46,50 +42,38 @@ export class DocFeed implements IDocFeed {
 
   async resolveTail(topic: Topic, owner: string): Promise<bigint> {
     return await resolveFeedTail(
-      () => this.latestIndex(topic, owner),
+      () => this.storage.feedHead(topic, owner),
       index => this.readIndex(topic, owner, index),
       `${TAG}(${owner.slice(0, 8)}…)`,
     )
   }
 
-  // Bee's head lookup; `null` on a miss or error, and the forward walk takes over.
-  private async latestIndex(topic: Topic, owner: string): Promise<bigint | null> {
-    try {
-      const reader = this.bee.feed.makeReader(topic, owner)
-
-      return (await reader.downloadPayload()).feedIndex.toBigInt()
-    } catch (err) {
-      if (!isNotFoundError(err)) {
-        this.logger.debug(`${TAG} feed head lookup failed, walking from 0 instead: ${String(err)}`)
-      }
-
-      return null
-    }
-  }
-
   private async readIndex(topic: Topic, owner: string, index: bigint): Promise<FeedRead<DocFeedEntry>> {
-    try {
-      const reader = this.bee.feed.makeReader(topic, owner)
-      const result = await reader.downloadPayload({ index: FeedIndex.fromBigInt(index) })
-      const record = JSON.parse(result.payload.toUtf8()) as DocFeedRecord
-
-      if (!record?.snapshot) {
-        return { status: 'absent' }
-      }
-
-      return {
-        status: 'ok',
-        payload: { index: result.feedIndex.toBigInt(), snapshot: record.snapshot, timestamp: record.timestamp },
-      }
-    } catch (err) {
-      return isNotFoundError(err) ? { status: 'absent' } : { status: 'failed', error: err }
-    }
+    return parseRecord(await this.storage.readFeed(topic, owner, index), index)
   }
 
-  async write(topic: Topic, signer: PrivateKey, index: FeedIndex, snapshot: string): Promise<void> {
+  async write(topic: Topic, index: bigint, snapshot: string): Promise<void> {
     const record: DocFeedRecord = { v: API_VERSION, snapshot, timestamp: Date.now() }
-    const writer = this.bee.feed.makeWriter(topic, signer)
 
-    await writer.uploadPayload(this.stamp, JSON.stringify(record), { index, deferred: DEFERRED_FEED_UPLOAD })
+    await this.storage.writeFeed(topic, index, Bytes.fromUtf8(JSON.stringify(record)).toUint8Array())
+  }
+}
+
+// One identity owns several sessions' feeds, so the probe is keyed by feed, not by owner alone.
+function probeKey(topic: Topic, owner: string): string {
+  return `${owner}:${topic.toHex()}`
+}
+
+function parseRecord(read: StorageRead, index: bigint): FeedRead<DocFeedEntry> {
+  if (read.status !== 'ok') return read
+
+  try {
+    const record = JSON.parse(new TextDecoder().decode(read.data)) as DocFeedRecord
+
+    if (!record?.snapshot) return { status: 'absent' }
+
+    return { status: 'ok', payload: { index, snapshot: record.snapshot, timestamp: record.timestamp } }
+  } catch (err) {
+    return { status: 'failed', error: err }
   }
 }

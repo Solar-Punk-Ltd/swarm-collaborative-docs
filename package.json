@@ -49,6 +49,7 @@
     "lint:fix": "pnpm run lint --fix",
     "check:types": "tsc -p tsconfig.lib.json --noEmit",
     "check:types:app": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
     "depcheck": "depcheck .",
     "prepare": "husky"
   },
@@ -72,6 +73,7 @@
     "@typescript-eslint/eslint-plugin": "8.58.0",
     "@typescript-eslint/parser": "8.58.0",
     "@vitejs/plugin-react": "^6.0.1",
+    "cafe-utility": "^34.0.0",
     "depcheck": "^1.4.7",
     "eslint": "9.39.4",
     "eslint-config-prettier": "9.1.2",
@@ -94,6 +96,7 @@
     "vite": "^8.0.6",
     "vite-plugin-dts": "^4.5.4",
     "vite-plugin-node-polyfills": "^0.26.0",
+    "vitest": "~5.0.5",
     "y-monaco": "^0.1.6",
     "y-webrtc": "^10.3.0",
     "yjs": "^13.6.30"

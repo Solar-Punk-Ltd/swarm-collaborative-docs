@@ -1,4 +1,4 @@
-import type { FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
+import type { Topic } from '@ethersphere/bee-js'
 
 /** Payload at each index of a session's snapshot feed. */
 export interface DocFeedRecord {
@@ -10,17 +10,17 @@ export interface DocFeedRecord {
   timestamp: number
 }
 
-/** A snapshot read back from a feed, paired with the index Bee resolved it at. */
+/** A snapshot read back from a feed, paired with its index. */
 export interface DocFeedEntry {
   index: bigint
   snapshot: string
   timestamp: number
 }
 
-/** Reads and writes the per-session snapshot feeds. */
+/** Reads and writes the per-session snapshot feeds. Every one is owned by its session's identity. */
 export interface IDocFeed {
   /** Reads `owner`'s snapshot at exactly `index`. Returns `null` if that index does not exist. */
-  read(topic: Topic, owner: string, index: FeedIndex): Promise<DocFeedEntry | null>
+  read(topic: Topic, owner: string, index: bigint): Promise<DocFeedEntry | null>
 
   /** `owner`'s newest snapshot at or after `fromIndex`, or `null` if nothing is readable from there. */
   readLatestFrom(topic: Topic, owner: string, fromIndex: bigint): Promise<DocFeedEntry | null>
@@ -28,6 +28,6 @@ export interface IDocFeed {
   /** Highest index present in `owner`'s feed, or `-1n` if it holds nothing yet. */
   resolveTail(topic: Topic, owner: string): Promise<bigint>
 
-  /** Writes a snapshot to `signer`'s own feed at `index`. Throws if the write fails. */
-  write(topic: Topic, signer: PrivateKey, index: FeedIndex, snapshot: string): Promise<void>
+  /** Writes a snapshot at `index` of this storage owner's feed `topic`. Throws if the write fails. */
+  write(topic: Topic, index: bigint, snapshot: string): Promise<void>
 }

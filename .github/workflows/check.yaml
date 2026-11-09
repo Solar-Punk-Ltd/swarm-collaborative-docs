@@ -63,6 +63,9 @@ jobs:
       - name: Types check (demo app)
         run: pnpm run check:types:app
 
+      - name: Unit tests
+        run: pnpm test
+
       - name: Build demo app
         run: pnpm run build:app
 

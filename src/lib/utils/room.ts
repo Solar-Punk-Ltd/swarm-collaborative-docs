@@ -1,11 +1,11 @@
-import { Bytes, PrivateKey } from '@ethersphere/bee-js'
+import { Bytes } from '@ethersphere/bee-js'
 
-import { getSigner } from './bee'
 import { remove0x, uuidV4 } from './common'
 
 // A room is its random key: every feed topic derives from it, and it travels only in an invite's URL fragment.
-const SCHEME = 'swarmdoc:v1'
-const INVITE_VERSION = '1'
+// v2 changed every topic (identity-owned feeds, GSOC member list), so a v1 client must not open a v2 link.
+const SCHEME = 'swarmdoc:v2'
+const INVITE_VERSION = '2'
 const DISPLAY_ID_CHARS = 32
 
 /** Fields an invite link carries. Everything else about a room is derived from `key`. */
@@ -59,14 +59,12 @@ export class Room {
     return remove0x(identity.toLowerCase())
   }
 
-  /** Signing key of the directory feed, the one feed every member can append to. */
-  directorySigner(): PrivateKey {
-    return getSigner(`${SCHEME}:dir:${this.secret}`)
-  }
-
-  /** Owner address of the room's directory feed. */
-  directoryOwner(): string {
-    return this.directorySigner().publicKey().address().toString()
+  /**
+   * GSOC topic of the directory's entry `index`. Anyone who knows the topic can write there, which is what lets every
+   * member append. A hash of the room key, never the key: Freedom logs GSOC topics.
+   */
+  directoryTopic(index: bigint): string {
+    return `${this.digest('dir')}:${index}`
   }
 
   /** Identities discovery can start from before any feed has been read. */

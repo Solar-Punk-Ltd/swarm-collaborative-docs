@@ -10,9 +10,9 @@ export enum PeerConnectionState {
 export interface MemberEntry {
   /** Display name of the user. */
   username: string
-  /** Identity address of the user (hex, no 0x prefix). Shared across that user's sessions. */
+  /** Identity address of the user (hex, no 0x prefix). Shared across that user's sessions; owns their feeds. */
   identity: string
-  /** Session identifier this entry was registered with. */
+  /** Session identifier; with `identity` it names this session's snapshot and signal feeds. */
   sessionId: string
   /** Unix timestamp (ms) the entry was last written or refreshed. */
   lastSeen: number

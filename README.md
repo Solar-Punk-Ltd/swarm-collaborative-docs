@@ -27,8 +27,12 @@ and each member owns exactly one _announce_ feed, where they publish which of th
 calls this an **identity** — it means any participant, not the room's organiser. (The creator appears in one place only:
 as a starting point for discovery, described below.)
 
-**Session.** One open tab. Each tab signs with its own key, derived from the member's private key plus a `sessionId`, so
-two tabs belonging to the same person are two independent writers rather than two writers fighting over one feed.
+**Session.** One open tab. A tab's snapshot and signal feeds are owned by the member's identity and named by the tab's
+`sessionId`, so two tabs belonging to the same person are two feeds rather than two writers fighting over one. Each tab
+also holds a session key of its own, which signs its deltas on the fast path.
+
+One owner per person is what lets the same code run where the page holds no key: in Freedom Browser the browser signs
+every write with its identity for the site (see [Storage](#storage-a-bee-node-or-freedom-browser)).
 
 Four feeds, all append-only, all read by explicit index:
 
@@ -36,8 +40,11 @@ Four feeds, all append-only, all read by explicit index:
 | ------------- | ------- | ------------------ | --------------------------------------------------- |
 | **Directory** | room    | anyone in the room | the identities known to be in the room              |
 | **Announce**  | member  | that member        | their open sessions, plus identities they have seen |
-| **Snapshot**  | session | that session       | the full document state, rewritten at every index   |
-| **Signal**    | session | that session       | the current SDP offer and answer (SwarmRtc only)    |
+| **Snapshot**  | session | that member        | the full document state, rewritten at every index   |
+| **Signal**    | session | that member        | the current SDP offer and answer (SwarmRtc only)    |
+
+The directory is not a feed in the strict sense but a run of GSOC chunks, one per index, each at a topic derived from
+the room secret.
 
 Why four rather than one shared list? A member's announce feed is addressed _from_ their identity, so you cannot read
 the feed of someone you have never heard of — there is no address to ask for. The directory solves exactly that and
@@ -50,15 +57,17 @@ lost entries in precisely that way — every writer republished the whole list f
 
 Two different kinds of key sign those feeds, and the difference between them is the whole security story.
 
-- **A room-derived key** signs the directory. It is computed from the room secret alone, so everyone in the room can
-  write it. That is what makes a shared directory work without a coordinator, and it also means any member can forge an
-  entry there — list an identity that never joined. Membership is trust-on-first-use.
+- **A topic-derived key** signs each directory entry. Entry _i_ is a GSOC chunk at a topic computed from the room
+  secret, and a GSOC key depends on its topic alone (mined deterministically, exactly as Freedom Browser's
+  `swarm_sendGsoc` does it), so everyone in the room can write it. That is what makes a shared directory work without a
+  coordinator, and it also means any member can forge an entry there — list an identity that never joined. Membership is
+  trust-on-first-use.
 - **Identity keys** sign everything else. An announce feed is signed by the identity it describes, so nobody can publish
-  sessions in someone else's name. Snapshot and signal feeds are signed by a session key derived from the member's own
-  private key plus its `sessionId`; the room secret cannot produce either. Swarm feeds are single-owner: a node accepts
-  an update only if the feed's owner signed it. So nobody — not another member, not the gateway — can write into your
-  snapshot feed or alter what you already put there. Deltas sent over WebRTC carry a signature checked against the
-  sender's session address, so the same holds on the fast path.
+  sessions in someone else's name, and the sessions it lists are read from that identity's feeds only. Snapshot and
+  signal feeds are signed by the member's identity too; the room secret cannot produce it. Swarm feeds are single-owner:
+  a node accepts an update only if the feed's owner signed it. So nobody — not another member, not the gateway — can
+  write into your snapshot feed or alter what you already put there. Deltas sent over WebRTC carry a signature by the
+  sending tab's own session key, checked against the sender's session address, so the same holds on the fast path.
 
 What this does _not_ give you is a closed room. Anyone holding the key is a participant by definition: they can read
 everything and publish a document feed of their own, which everyone else will merge. The guarantee is narrower and still
@@ -110,11 +119,11 @@ not authority — it is a head start, one announce feed that can be read before 
 
 ## Identity, and what is visible
 
-The library does not choose your identity — it takes a private key and derives everything else from it. The demo app
-generates a random one per browser and keeps it in `localStorage`, which makes each participant a pseudonym that exists
-only inside that app. An application is free to supply a key that stands for something real instead: a Swarm ID, or a
-key held by a wallet. That substitution is the single biggest privacy decision here, and it is made outside this
-library.
+The library does not choose your identity — it takes a private key and derives everything else from it, or, in Freedom
+Browser, takes the identity Freedom signs with for the site. The demo app generates a random one per browser and keeps
+it in `localStorage`, which makes each participant a pseudonym that exists only inside that app. An application is free
+to supply a key that stands for something real instead: a Swarm ID, or a key held by a wallet. That substitution is the
+single biggest privacy decision here, and it is made outside this library.
 
 What it changes: an identity address is written in the clear into announce entries and onto every notification payload.
 Anyone with the room key therefore sees who is in the room, under whatever that key represents. A random per-app key
@@ -139,14 +148,16 @@ describes.
 
 ### Joining a room
 
-1. `Room` derives the namespace and every feed key from the secret.
+1. `Room` derives the namespace and every topic from the secret.
 2. `Members.add()` reads the directory, appends this identity to it if it is missing, then writes the session into this
    identity's announce feed. Listed before announced, because a member already in the room learns that a new identity
    exists only by polling the directory.
-3. `Members.read()` drains the directory, then reads the announce feed of every identity it names. Announce payloads
-   repeat their writer's own `known` list, which gives a second path to the same identities when a directory index is
+3. `Members.read()` drains the directory, then reads the announce feed of every identity it names, its own included: the
+   same person's other tabs and earlier visits are sessions whose snapshots hold their work. Announce payloads repeat
+   their writer's own `known` list, which gives a second path to the same identities when a directory index is
    momentarily unreadable.
-4. Every session found is registered and handed to the transport to dial; its snapshot feed is read immediately.
+4. Every session found is registered and handed to the transport to dial; its snapshot feed, owned by its identity and
+   named by its `sessionId`, is read immediately.
 5. A `join` notification goes out on the transport, so peers already connected fetch now instead of at their next poll.
 6. The member list is re-read every 5 s, and on demand via `refreshMemberList()`.
 
@@ -285,6 +296,11 @@ connections come and go, report peers it learns about itself through `onPeerDisc
 updates it applied are not echoed back out. Persistence, discovery over Swarm, cursors and the sync gate all sit above
 the transport and come for free — the two shipped ones share no state and know nothing about each other.
 
+**Storage** implements [`SwarmStorage`](src/lib/interfaces/storage.ts) and is passed as `infra.storage`: read and write
+a feed entry owned by its `owner`, read and send a GSOC chunk, and say whether writing can work. Everything the library
+writes goes through it, so a storage for another client (an in-browser node, a provider that signs on the user's behalf)
+is the whole port. The two shipped ones are described in [Storage](#storage-a-bee-node-or-freedom-browser).
+
 **Discovery** is not pluggable today — `SwarmDoc` constructs `Members` itself. The extension point that exists is
 `onPeerDiscovered`: a transport that already knows its peers (an awareness protocol, a registry, an ENS list) can push
 them in, and the Swarm feeds then act as the durable fallback. `infra.members` is display hints only; an identity
@@ -386,15 +402,51 @@ can take [`useSwarmDoc`](src/app/hooks/useSwarmDoc.tsx) as-is: it is a thin mapp
 **Sessions.** `sessionId` must be unique per tab and stable across reloads — `sessionStorage` is exactly that. Two tabs
 sharing one id write the same feeds with independent index counters and silently overwrite each other.
 
-**Postage.** Every participant writes their own feeds, so every participant needs a usable batch on the node their
-`beeUrl` names. There is no read-only participant mode. The batch is validated during `start()`; an unusable one raises
-`DOC_ERROR` rather than failing at the first write. How batches are bought and distributed — per user, app-provisioned,
-sponsored — is the application's decision and its trust model.
+**Postage.** Every participant writes their own feeds, so every participant needs a usable batch where their storage
+writes: on the node their `beeUrl` names, or Freedom's publishing setup. There is no read-only participant mode. The
+batch is validated during `start()`; an unusable one raises `DOC_ERROR` rather than failing at the first write. How
+batches are bought and distributed — per user, app-provisioned, sponsored — is the application's decision and its trust
+model.
 
 **Tunables**, fixed in this version: 500 ms edit debounce, 5 s member poll, 15 s snapshot poll for peers without a
 channel, 30 s sync grace; and in SwarmRtc a 2 s signal poll, 5 s retry spacing capped at 5, and a 90 s connect timeout.
 The connection mesh is full: _N_ peers means _N−1_ channels and _N−1_ signal feeds polled against one Bee node — see
 [Limitations](#limitations) for what that costs.
+
+### Storage: a Bee node, or Freedom Browser
+
+With `infra.beeUrl` and `user.privateKey`, the library talks to a Bee node through bee-js and the page signs every write
+with the identity key, as above. `createBeeStorage({ beeUrl, stamp, privateKey })` builds the same storage explicitly.
+
+In [Freedom Browser](https://github.com/solardev-xyz/freedom-browser) pages cannot reach a node's HTTP API at all (0.8.7
+and later cancel every such request); they write through its `window.swarm` provider instead, which signs with the
+browser's own identity for the site and never hands the page a key. `createFreedomStorage()` writes through it:
+
+```typescript
+const storage = await createFreedomStorage() // asks for the connection and feed grants
+
+const swarmDoc = new SwarmDoc({
+  user: { nickname: 'Alice', sessionId: getOrCreateSessionId() },
+  infra: { storage, roomKey: invite.key, roomCreator: invite.creator, transport },
+})
+// Inviting from Freedom: the creator is `storage.owner`, the identity Freedom signs with.
+```
+
+Both write the same bytes, so a member on a Bee node and a member in Freedom share one room. In Freedom:
+
+- **Grants.** Connecting and feed access are asked once each when the storage is created; messaging (`swarm_sendGsoc`,
+  the directory) on the first directory write. Writes need Freedom's publishing setup, a node with a usable batch; until
+  then `start()` raises `DOC_ERROR` and edits stay in the tab.
+- **Identity.** The person is Freedom's identity for that site, so the same person in another browser, or on another
+  site address, is a second identity.
+- **Write cost.** Freedom uploads one chunk per call. A snapshot over 4 KB goes up as a chunk tree built in the page,
+  one call per 4 KB (four at a time), about a second each through a Bee node and several through Freedom's own node.
+  Small documents are one call.
+- **Directory keys.** Reading directory entry _i_ needs its GSOC key, which the page mines from the topic: 0.3–2 s of
+  work per entry, in short slices so the page stays responsive, then cached. Writing is mined by Freedom.
+- **Read budget.** Freedom allows a connected site 600 reads a minute; a two-person room uses about 45.
+
+The directory's format depends on Freedom's GSOC derivation (`freedom-gsoc-v1:`, proximity 12) staying as it is.
 
 ### Behind a gateway
 
@@ -440,6 +492,10 @@ that link is what grants access, not the room id shown beside it.
   every other one. Both say the same thing: this is built for small groups, and neither has been tuned beyond them.
 - **Multi-tab announce races.** Two tabs of one identity share an announce feed; a collision costs one index and a
   retry, and the loser adopts what the winner wrote. A per-browser writer election would remove it.
+- **Room format.** Version 2 (identity-owned session feeds, a GSOC directory) shares nothing with version 1: invites are
+  `v=2`, and a v1 room cannot be opened by this version or the reverse.
+- **Freedom.** Large snapshots are slow to write there, one provider call per 4 KB (see
+  [Storage](#storage-a-bee-node-or-freedom-browser)); a person is one identity per browser and site.
 
 ---
 

@@ -62,7 +62,7 @@ class SwarmRtcTransport implements DocTransport {
     private readonly iceServers: RTCIceServer[],
     private readonly deps: DocTransportDeps,
   ) {
-    this.swarmSignal = new SwarmSignal(this.deps.docFeedId, this.deps.beeApiUrl, this.deps.signer, this.deps.stampId)
+    this.swarmSignal = new SwarmSignal(this.deps.docFeedId, this.deps.storage, this.deps.sessionId)
   }
 
   start(): void {
@@ -405,7 +405,18 @@ class SwarmRtcTransport implements DocTransport {
       return
     }
 
-    const payload = await this.swarmSignal.read(peerAddress)
+    const entry = this.deps.members.get(peerAddress)
+
+    // The feed is named by the peer's identity and session id; a peer known only by address cannot be read yet.
+    if (!entry?.identity || !entry.sessionId) {
+      return
+    }
+
+    const payload = await this.swarmSignal.read({
+      address: peerAddress,
+      identity: entry.identity,
+      sessionId: entry.sessionId,
+    })
 
     // A fresh record is proof of life, so the peer earns back its retries.
     if (payload) {
