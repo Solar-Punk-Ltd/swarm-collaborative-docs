@@ -1,4 +1,4 @@
-import { FeedIndex, NULL_STAMP, PrivateKey, Signature, Topic } from '@ethersphere/bee-js'
+import { PrivateKey, Signature, Topic } from '@ethersphere/bee-js'
 import * as Y from 'yjs'
 
 import {
@@ -12,8 +12,10 @@ import {
   NotificationHandler,
   NotificationPayload,
   PeerConnectionState,
+  SwarmStorage,
 } from '../interfaces'
-import { deriveSessionSigner, validateStamps } from '../utils/bee'
+import { createBeeStorage } from '../storage/beeStorage'
+import { deriveSessionSigner } from '../utils/bee'
 import { decode, encode, Origin, remove0x, uuidV4 } from '../utils/common'
 import { API_VERSION, DOC_FEED_SUFFIX } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
@@ -29,7 +31,6 @@ const TAG = 'SwarmDoc'
 const DEBOUNCE_MS = 500
 const DEFAULT_MEMBER_LIST_POLL_INTERVAL_MS = 5000
 const DISCONNECTED_MEMBER_POLL_INTERVAL_MS = 15000
-const MIN_TTL_WARN_DAYS = 2
 // Wait for startup peers that owe state before opening anyway: two disconnected polls and most handshakes.
 const SYNC_GRACE_MS = 30000
 
@@ -38,7 +39,7 @@ export class SwarmDoc implements ISwarmDoc {
   public readonly doc: Y.Doc
   private errorHandler = ErrorHandler.getInstance()
   private emitter: EventEmitter
-  private identitySigner: PrivateKey
+  private storage: SwarmStorage
   private identityAddress: string
   private signer: PrivateKey
   private ownAddress: string
@@ -50,9 +51,6 @@ export class SwarmDoc implements ISwarmDoc {
   private docFeedId: string
   private docTopic: string
   private transport: DocTransport
-  private beeApiUrl: string
-  private configuredStamp: string | undefined
-  private stampId: string
   private members: IMembers
   private docFeed: IDocFeed
 
@@ -77,22 +75,19 @@ export class SwarmDoc implements ISwarmDoc {
     this.emitter = new EventEmitter()
 
     this.sessionId = settings.user.sessionId ?? uuidV4()
-    this.identitySigner = new PrivateKey(remove0x(settings.user.privateKey))
-    this.identityAddress = this.identitySigner.publicKey().address().toString()
-    this.signer = deriveSessionSigner(settings.user.privateKey, this.sessionId)
+    this.storage = SwarmDoc.storageFor(settings)
+    this.identityAddress = remove0x(this.storage.owner.toLowerCase())
+    this.signer = SwarmDoc.sessionSigner(settings, this.sessionId)
     this.ownAddress = this.signer.publicKey().address().toString()
     this.username = settings.user.nickname
-    this.beeApiUrl = settings.infra.beeUrl
-    this.configuredStamp = settings.infra.stamp
-    this.stampId = settings.infra.stamp || NULL_STAMP.toHex()
 
     this.room = new Room(settings.infra.roomKey, settings.infra.roomCreator)
 
     this.docFeedId = this.room.namespace + DOC_FEED_SUFFIX
     this.docTopic = Topic.fromString(this.docFeedId).toString()
 
-    this.members = new Members(this.room, this.identitySigner, this.beeApiUrl, this.stampId)
-    this.docFeed = new DocFeed(this.beeApiUrl, this.stampId)
+    this.members = new Members(this.room, this.storage)
+    this.docFeed = new DocFeed(this.storage)
 
     this.nameHints = new Map(
       Array.from(settings.infra.members ?? [], ([addr, username]) => [remove0x(addr.toLowerCase()), username]),
@@ -114,18 +109,42 @@ export class SwarmDoc implements ISwarmDoc {
       docFeedId: this.docFeedId,
       rendezvous: this.room.rendezvous,
       transportSecret: this.room.transportSecret(),
-      beeApiUrl: this.beeApiUrl,
+      storage: this.storage,
+      beeApiUrl: settings.infra.storage ? '' : (settings.infra.beeUrl ?? ''),
       signer: this.signer,
-      stampId: this.stampId,
     })
   }
 
-  private ownFeedTopic(): Topic {
-    return Topic.fromString(this.docFeedId + this.ownAddress)
+  // The app's storage, or bee-js on `beeUrl` with the identity key owning every feed.
+  private static storageFor(settings: DocSettings): SwarmStorage {
+    if (settings.infra.storage) return settings.infra.storage
+
+    const { beeUrl, stamp } = settings.infra
+    const { privateKey } = settings.user
+
+    if (!beeUrl || !privateKey) {
+      throw new Error('SwarmDoc needs infra.storage, or infra.beeUrl together with user.privateKey.')
+    }
+
+    return createBeeStorage({ beeUrl, stamp, privateKey })
   }
 
-  private memberFeedTopic(address: string): Topic {
-    return Topic.fromString(this.docFeedId + address)
+  // Signs deltas only. Derived when the page holds the identity key, so a reload with the same sessionId keeps it.
+  private static sessionSigner(settings: DocSettings, sessionId: string): PrivateKey {
+    if (settings.user.sessionKey) return new PrivateKey(remove0x(settings.user.sessionKey))
+
+    if (settings.user.privateKey) return deriveSessionSigner(settings.user.privateKey, sessionId)
+
+    return new PrivateKey(crypto.getRandomValues(new Uint8Array(32)))
+  }
+
+  /** Snapshot feed topic of a session: `<namespace>_doc:<sessionId>`, owned by the session's identity. */
+  private feedTopic(sessionId: string): Topic {
+    return Topic.fromString(`${this.docFeedId}:${sessionId}`)
+  }
+
+  private ownFeedTopic(): Topic {
+    return this.feedTopic(this.sessionId)
   }
 
   private registerMember(address: string, entry: MemberEntry): void {
@@ -214,6 +233,7 @@ export class SwarmDoc implements ISwarmDoc {
       topic: this.docTopic,
       author: this.ownAddress,
       identity: this.identityAddress,
+      sessionId: this.sessionId,
       username: this.username,
     })
     this.members.retire(this.ownAddress).catch(() => {
@@ -267,7 +287,7 @@ export class SwarmDoc implements ISwarmDoc {
 
       // Claimed before the write and kept on failure: a failed upload may still have stored its chunk.
       this.ownIndex = nextIndex
-      await this.docFeed.write(this.ownFeedTopic(), this.signer, FeedIndex.fromBigInt(nextIndex), snapshot)
+      await this.docFeed.write(this.ownFeedTopic(), nextIndex, snapshot)
 
       const deltaBytes = decode(delta)
       const sig = this.signer.sign(deltaBytes).toHex()
@@ -278,6 +298,7 @@ export class SwarmDoc implements ISwarmDoc {
         topic: this.docTopic,
         author: this.ownAddress,
         identity: this.identityAddress,
+        sessionId: this.sessionId,
         username: this.username,
         feedIndex: Number(nextIndex),
         delta,
@@ -295,12 +316,12 @@ export class SwarmDoc implements ISwarmDoc {
 
   private async init(): Promise<void> {
     try {
-      await validateStamps(this.beeApiUrl, this.configuredStamp, MIN_TTL_WARN_DAYS, msg => {
+      await this.storage.check(msg => {
         this.logger.warn(`${TAG} ${msg}`)
         this.emitter.emit(DOC_EVENTS.DOC_ERROR, new Error(msg))
       })
     } catch (err) {
-      this.errorHandler.handleError(err, `${TAG}.validateStamps`)
+      this.errorHandler.handleError(err, `${TAG}.storage.check`)
       this.emitter.emit(DOC_EVENTS.DOC_ERROR, err)
     }
     const [ownIndex] = await Promise.allSettled([this.initOwnIndex(), this.initMemberList()])
@@ -384,7 +405,7 @@ export class SwarmDoc implements ISwarmDoc {
       return
     }
 
-    this.ownIndex = await this.docFeed.resolveTail(this.ownFeedTopic(), this.ownAddress)
+    this.ownIndex = await this.docFeed.resolveTail(this.ownFeedTopic(), this.identityAddress)
     this.ownIndexResolved = true
     this.logger.debug(`${TAG} own feed tail resolved at index ${this.ownIndex}`)
   }
@@ -396,7 +417,7 @@ export class SwarmDoc implements ISwarmDoc {
       return
     }
 
-    const entry = await this.docFeed.read(this.ownFeedTopic(), this.ownAddress, FeedIndex.fromBigInt(this.ownIndex))
+    const entry = await this.docFeed.read(this.ownFeedTopic(), this.identityAddress, this.ownIndex)
 
     if (entry) {
       this.applyYjsBytes(entry.snapshot, `own idx=${this.ownIndex}`)
@@ -423,6 +444,7 @@ export class SwarmDoc implements ISwarmDoc {
       topic: this.docTopic,
       author: this.ownAddress,
       identity: this.identityAddress,
+      sessionId: this.sessionId,
       username: this.username,
     })
 
@@ -494,11 +516,21 @@ export class SwarmDoc implements ISwarmDoc {
       return
     }
 
-    const topic = this.memberFeedTopic(memberAddress)
+    const member = this.members.get(memberAddress)
+
+    // The feed is named by the member's identity and session id; without them there is nothing to read yet.
+    if (!member?.identity || !member.sessionId) {
+      this.logger.debug(`${TAG} fetchSnapshot: ${memberAddress.slice(0, 8)}… has no session id yet`)
+
+      return
+    }
+
+    const topic = this.feedTopic(member.sessionId)
+    const owner = member.identity
     const entry =
       targetIndex === undefined
-        ? await this.docFeed.readLatestFrom(topic, memberAddress, lastKnown + 1n)
-        : await this.docFeed.read(topic, memberAddress, FeedIndex.fromBigInt(targetIndex))
+        ? await this.docFeed.readLatestFrom(topic, owner, lastKnown + 1n)
+        : await this.docFeed.read(topic, owner, targetIndex)
 
     if (!entry) {
       this.logger.debug(`${TAG} fetchSnapshot: ${memberAddress.slice(0, 8)}… nothing readable`)
@@ -678,7 +710,7 @@ export class SwarmDoc implements ISwarmDoc {
     return {
       username: payload.username,
       identity: remove0x(payload.identity.toLowerCase()),
-      sessionId: '',
+      sessionId: payload.sessionId ?? '',
       lastSeen: Date.now(),
       live: true,
     }
@@ -692,6 +724,7 @@ export class SwarmDoc implements ISwarmDoc {
         topic: this.docTopic,
         author: this.ownAddress,
         identity: this.identityAddress,
+        sessionId: this.sessionId,
         username: this.username,
         cursor: this.localCursor,
       })

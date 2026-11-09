@@ -141,6 +141,7 @@ class SignalingServerTransport implements DocTransport {
       topic: this.deps.docFeedId,
       author,
       identity,
+      sessionId: this.deps.members.get(author)?.sessionId ?? '',
       username,
       cursor,
     })

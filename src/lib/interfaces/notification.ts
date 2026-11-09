@@ -8,6 +8,8 @@ interface BasePayload {
   author: string
   /** Identity address behind `author` (hex, no 0x prefix). Shared by all sessions of the same user. */
   identity: string
+  /** Session identifier of `author`; with `identity` it names the author's feeds. */
+  sessionId: string
   /** Nickname of the publishing peer. */
   username: string
 }

@@ -1,10 +1,16 @@
-import type { FeedReader } from '@ethersphere/bee-js'
-import { Bee, FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
+import { Topic } from '@ethersphere/bee-js'
 
-import { AnnouncePayload, DirectoryPayload, IMembers, MemberEntry, PeerConnectionState } from '../interfaces'
-import { isNotFoundError } from '../utils/bee'
+import {
+  AnnouncePayload,
+  DirectoryPayload,
+  IMembers,
+  MemberEntry,
+  PeerConnectionState,
+  StorageRead,
+  SwarmStorage,
+} from '../interfaces'
 import { remove0x, sleep } from '../utils/common'
-import { API_VERSION, DEFERRED_FEED_UPLOAD, MEMBERS_FEED_SUFFIX } from '../utils/constants'
+import { API_VERSION, MEMBERS_FEED_SUFFIX } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
 import { drainFeed, FeedProbe, FeedRead, resolveFeedTail } from '../utils/feed'
 import { Logger } from '../utils/logger'
@@ -17,6 +23,8 @@ const MAX_CRAWL_IDENTITIES = 32
 const REFRESH_COOLDOWN_MS = 60_000
 // Random pause, so two writers that collided on an index do not collide again on the next.
 const WRITE_RETRY_JITTER_MS = 400
+// The directory is one run of entries per room, so one probe key covers it.
+const DIRECTORY_PROBE_KEY = 'directory'
 
 function retryJitter(): number {
   return Math.floor(Math.random() * WRITE_RETRY_JITTER_MS)
@@ -24,23 +32,36 @@ function retryJitter(): number {
 
 /*
  * Each identity owns an announce feed listing its sessions, signed by the identity so nobody else can write it.
- * The directory feed, appendable by every key holder, only names identities, so members learn about newcomers.
+ * The directory, appendable by every key holder, only names identities, so members learn about newcomers. It is a run
+ * of GSOC entries, one topic per index derived from the room key, because a GSOC key depends on its topic alone and
+ * so every member can write it, through Freedom's `swarm_sendGsoc` or with bee-js and the same key.
  * Two tabs of one identity can still collide on their announce feed; the loser adopts the winner's entry and retries.
  */
+function decodeJson<T>(read: StorageRead, valid: (payload: T) => boolean): FeedRead<T> {
+  if (read.status !== 'ok') return read
+
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(read.data)) as T
+
+    return valid(payload) ? { status: 'ok', payload } : { status: 'absent' }
+  } catch (err) {
+    return { status: 'failed', error: err }
+  }
+}
+
+function encodeJson(payload: unknown): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(payload))
+}
+
 export class Members implements IMembers {
-  private readonly bee: Bee
+  private readonly storage: SwarmStorage
   private readonly room: Room
   private readonly identity: string
   private readonly topic: Topic
-  private readonly ownSigner: PrivateKey
   private readonly ownOwner: string
-  private readonly stamp: string
   private readonly errorHandler = ErrorHandler.getInstance()
   private readonly logger = Logger.getInstance()
   private readonly probe = new FeedProbe()
-
-  private readonly directoryAddress: string
-  private readonly directorySigner: PrivateKey
 
   private ownIndex: bigint = -1n
   private ownIndexResolved = false
@@ -64,16 +85,12 @@ export class Members implements IMembers {
   private readonly indices: Map<string, bigint> = new Map()
   private readonly connStates: Map<string, PeerConnectionState> = new Map()
 
-  constructor(room: Room, identitySigner: PrivateKey, beeUrl: string, stamp: string) {
+  constructor(room: Room, storage: SwarmStorage) {
     this.room = room
-    this.identity = remove0x(identitySigner.publicKey().address().toString().toLowerCase())
+    this.storage = storage
+    this.identity = remove0x(storage.owner.toLowerCase())
     this.topic = Topic.fromString(room.namespace + MEMBERS_FEED_SUFFIX)
-    this.ownSigner = identitySigner
     this.ownOwner = room.announceOwner(this.identity)
-    this.directorySigner = room.directorySigner()
-    this.directoryAddress = room.directoryOwner()
-    this.bee = new Bee(beeUrl)
-    this.stamp = stamp
 
     this.knownIdentities.add(this.identity)
 
@@ -182,12 +199,10 @@ export class Members implements IMembers {
 
   // Every directory entry counts, not just the newest: each names only the identities its writer added.
   private async readDirectory(): Promise<void> {
-    const reader = this.bee.feed.makeReader(this.topic, this.directoryAddress)
-
     const { next } = await drainFeed(
-      index => this.readDirectoryIndex(reader, index),
+      index => this.readDirectoryIndex(index),
       this.directoryNextRead,
-      this.directoryAddress,
+      DIRECTORY_PROBE_KEY,
       this.probe,
       `${TAG} directory`,
       payload => this.mergeDirectory(payload),
@@ -223,11 +238,8 @@ export class Members implements IMembers {
   }
 
   private async appendDirectory(identities: string[]): Promise<void> {
-    const reader = this.bee.feed.makeReader(this.topic, this.directoryAddress)
-    const writer = this.bee.feed.makeWriter(this.topic, this.directorySigner)
-
     try {
-      await this.resolveDirectoryTail(reader)
+      await this.resolveDirectoryTail()
     } catch (err) {
       this.errorHandler.handleError(err, `${TAG}.appendDirectory resolveTail`)
 
@@ -242,17 +254,14 @@ export class Members implements IMembers {
       this.directoryIndex = nextIndex
 
       try {
-        await writer.uploadPayload(this.stamp, JSON.stringify(payload), {
-          index: FeedIndex.fromBigInt(nextIndex),
-          deferred: DEFERRED_FEED_UPLOAD,
-        })
+        await this.storage.sendGsoc(this.room.directoryTopic(nextIndex), encodeJson(payload))
       } catch (err) {
         this.errorHandler.handleError(err, `${TAG}.appendDirectory write`)
 
         return
       }
 
-      const verified = await this.readDirectoryIndex(reader, nextIndex)
+      const verified = await this.readDirectoryIndex(nextIndex)
 
       if (verified.status === 'ok') {
         // Whoever holds this index, their identities are now listed — take them either way.
@@ -275,27 +284,19 @@ export class Members implements IMembers {
     this.logger.warn(`${TAG} could not list ${identities.length} identity(s) after ${MAX_WRITE_RETRIES} attempts`)
   }
 
-  private async readDirectoryIndex(reader: FeedReader, index: bigint): Promise<FeedRead<DirectoryPayload>> {
-    try {
-      const result = await reader.downloadPayload({ index: FeedIndex.fromBigInt(index) })
-      const payload = JSON.parse(result.payload.toUtf8()) as DirectoryPayload
-
-      if (!Array.isArray(payload?.identities)) {
-        return { status: 'absent' }
-      }
-
-      return { status: 'ok', payload }
-    } catch (err) {
-      return isNotFoundError(err) ? { status: 'absent' } : { status: 'failed', error: err }
-    }
+  private async readDirectoryIndex(index: bigint): Promise<FeedRead<DirectoryPayload>> {
+    return decodeJson<DirectoryPayload>(await this.storage.readGsoc(this.room.directoryTopic(index)), p =>
+      Array.isArray(p?.identities),
+    )
   }
 
-  private async resolveDirectoryTail(reader: FeedReader): Promise<void> {
+  // GSOC entries have no head lookup: the walk starts at what this session has already read.
+  private async resolveDirectoryTail(): Promise<void> {
     if (this.directoryResolved) return
 
     this.directoryIndex = await resolveFeedTail(
-      () => this.latestIndex(reader),
-      index => this.readDirectoryIndex(reader, index),
+      () => Promise.resolve(this.directoryNextRead > 0n ? this.directoryNextRead - 1n : null),
+      index => this.readDirectoryIndex(index),
       `${TAG} directory`,
     )
     this.directoryResolved = true
@@ -304,10 +305,9 @@ export class Members implements IMembers {
 
   private async readAnnounce(identity: string): Promise<AnnouncePayload | null> {
     const owner = this.room.announceOwner(identity)
-    const reader = this.bee.feed.makeReader(this.topic, owner)
 
     const { latest, next } = await drainFeed(
-      index => this.readIndex(reader, index),
+      index => this.readIndex(owner, index),
       this.peerNextIndexes.get(identity) ?? 0n,
       owner,
       this.probe,
@@ -326,9 +326,14 @@ export class Members implements IMembers {
   }
 
   private mergeAnnounce(payload: AnnouncePayload, queue: string[]): void {
-    for (const [address, entry] of Object.entries(payload.sessions ?? {})) {
+    // The feed's owner, checked in readAnnounce, is the identity of every session it lists: the session's feeds are
+    // read from that owner, so an entry naming another identity must not redirect them.
+    const owner = remove0x(payload.identity.toLowerCase())
+
+    for (const [address, listed] of Object.entries(payload.sessions ?? {})) {
       const key = remove0x(address.toLowerCase())
       const previous = this.roster.get(key)
+      const entry = { ...listed, identity: owner }
 
       // `lastSeen` only moves forward on its writer's own feed, so it orders that writer's entries.
       if (key !== '' && !this.ownSessions.has(key) && (!previous || entry.lastSeen >= previous.lastSeen)) {
@@ -347,19 +352,8 @@ export class Members implements IMembers {
     }
   }
 
-  private async readIndex(reader: FeedReader, index: bigint): Promise<FeedRead<AnnouncePayload>> {
-    try {
-      const result = await reader.downloadPayload({ index: FeedIndex.fromBigInt(index) })
-      const payload = JSON.parse(result.payload.toUtf8()) as AnnouncePayload
-
-      if (!payload?.identity) {
-        return { status: 'absent' }
-      }
-
-      return { status: 'ok', payload }
-    } catch (err) {
-      return isNotFoundError(err) ? { status: 'absent' } : { status: 'failed', error: err }
-    }
+  private async readIndex(owner: string, index: bigint): Promise<FeedRead<AnnouncePayload>> {
+    return decodeJson<AnnouncePayload>(await this.storage.readFeed(this.topic, owner, index), p => Boolean(p?.identity))
   }
 
   // Republishes our `known` list once it has grown, at most once per cooldown.
@@ -373,11 +367,8 @@ export class Members implements IMembers {
   }
 
   private async publish(): Promise<void> {
-    const reader = this.bee.feed.makeReader(this.topic, this.ownOwner)
-    const writer = this.bee.feed.makeWriter(this.topic, this.ownSigner)
-
     try {
-      await this.resolveOwnTail(reader)
+      await this.resolveOwnTail()
     } catch (err) {
       this.errorHandler.handleError(err, `${TAG}.publish resolveTail`)
 
@@ -398,17 +389,14 @@ export class Members implements IMembers {
       this.ownIndex = nextIndex
 
       try {
-        await writer.uploadPayload(this.stamp, JSON.stringify(payload), {
-          index: FeedIndex.fromBigInt(nextIndex),
-          deferred: DEFERRED_FEED_UPLOAD,
-        })
+        await this.storage.writeFeed(this.topic, nextIndex, encodeJson(payload))
       } catch (err) {
         this.errorHandler.handleError(err, `${TAG}.publish write`)
 
         return
       }
 
-      const verified = await this.readIndex(reader, nextIndex)
+      const verified = await this.readIndex(this.ownOwner, nextIndex)
 
       if (verified.status === 'ok') {
         const written = verified.payload.sessions ?? {}
@@ -438,28 +426,15 @@ export class Members implements IMembers {
     this.logger.warn(`${TAG} publish: could not confirm own sessions after ${MAX_WRITE_RETRIES} attempts`)
   }
 
-  private async resolveOwnTail(reader: FeedReader): Promise<void> {
+  private async resolveOwnTail(): Promise<void> {
     if (this.ownIndexResolved) return
 
     this.ownIndex = await resolveFeedTail(
-      () => this.latestIndex(reader),
-      index => this.readIndex(reader, index),
+      () => this.storage.feedHead(this.topic, this.ownOwner),
+      index => this.readIndex(this.ownOwner, index),
       `${TAG} own`,
     )
     this.ownIndexResolved = true
     this.logger.debug(`${TAG} own announce feed tail resolved at index ${this.ownIndex}`)
-  }
-
-  // Bee's head lookup; `null` on a miss or error, and the forward walk takes over.
-  private async latestIndex(reader: FeedReader): Promise<bigint | null> {
-    try {
-      return (await reader.downloadPayload()).feedIndex.toBigInt()
-    } catch (err) {
-      if (!isNotFoundError(err)) {
-        this.logger.debug(`${TAG} feed head lookup failed, walking from 0 instead: ${String(err)}`)
-      }
-
-      return null
-    }
   }
 }

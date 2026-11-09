@@ -6,6 +6,12 @@ export type { SwarmRtcOptions } from './notification/swarmRtcTransport'
 export { createSignalingServerTransport } from './notification/signalingServerTransport'
 export type { SignalingServerOptions } from './notification/signalingServerTransport'
 
+export { createBeeStorage } from './storage/beeStorage'
+export type { BeeStorageOptions } from './storage/beeStorage'
+export { createFreedomStorage } from './storage/freedomStorage'
+export type { FreedomStorageOptions, FreedomSwarmProvider } from './storage/freedomStorage'
+export type { StorageRead, SwarmStorage } from './interfaces'
+
 export type { DocSettings } from './interfaces'
 export type {
   NotificationPayload,

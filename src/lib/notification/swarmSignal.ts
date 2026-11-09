@@ -1,9 +1,7 @@
-import type { FeedReader } from '@ethersphere/bee-js'
-import { Bee, EthAddress, FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
+import { Topic } from '@ethersphere/bee-js'
 
-import { ISwarmSignal, SignalFeedPayload, SignalRecord } from '../interfaces'
-import { isNotFoundError } from '../utils/bee'
-import { DEFERRED_FEED_UPLOAD, SIGNAL_FEED_SUFFIX } from '../utils/constants'
+import { ISwarmSignal, SignalFeedPayload, SignalPeer, SignalRecord, StorageRead, SwarmStorage } from '../interfaces'
+import { SIGNAL_FEED_SUFFIX } from '../utils/constants'
 import { ErrorHandler } from '../utils/error'
 import { drainFeed, FeedProbe, FeedRead, resolveFeedTail } from '../utils/feed'
 import { Logger } from '../utils/logger'
@@ -12,12 +10,27 @@ const TAG = 'SwarmSignal'
 // Short: a peer's next signal index holds the offer or answer being waited for.
 const SIGNAL_PROBE_BACKOFF_MS = [2_000, 4_000, 8_000]
 
+/** Signal feed topic of one session: `<docFeedId>_signal:<sessionId>`, owned by that session's identity. */
+export function signalTopic(docFeedId: string, sessionId: string): Topic {
+  return Topic.fromString(`${docFeedId}${SIGNAL_FEED_SUFFIX}:${sessionId}`)
+}
+
+function decode(read: StorageRead): FeedRead<SignalFeedPayload> {
+  if (read.status !== 'ok') return read
+
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(read.data)) as SignalFeedPayload
+
+    return Array.isArray(payload?.records) ? { status: 'ok', payload } : { status: 'absent' }
+  } catch (err) {
+    return { status: 'failed', error: err }
+  }
+}
+
 export class SwarmSignal implements ISwarmSignal {
-  private readonly bee: Bee
-  private readonly ownSigner: PrivateKey
-  private readonly ownAddress: string
-  private readonly topic: Topic
-  private readonly stamp: string
+  private readonly storage: SwarmStorage
+  private readonly docFeedId: string
+  private readonly ownTopic: Topic
   private currentIndex: bigint = -1n
   private ownIndexResolved = false
   private stopped = false
@@ -27,39 +40,31 @@ export class SwarmSignal implements ISwarmSignal {
   private readonly logger = Logger.getInstance()
   private writeQueue: Promise<void> = Promise.resolve()
 
-  constructor(rawTopic: string, beeUrl: string, ownSigner: PrivateKey, stamp: string) {
-    const signalFeedId = rawTopic + SIGNAL_FEED_SUFFIX
-    this.topic = Topic.fromString(signalFeedId)
-    this.ownSigner = ownSigner
-    this.ownAddress = ownSigner.publicKey().address().toString()
-    this.bee = new Bee(beeUrl)
-    this.stamp = stamp
+  constructor(docFeedId: string, storage: SwarmStorage, ownSessionId: string) {
+    this.docFeedId = docFeedId
+    this.storage = storage
+    this.ownTopic = signalTopic(docFeedId, ownSessionId)
   }
 
   // Always by explicit index: Bee's feed search delayed offer/answer discovery.
-  async read(peerAddress: string): Promise<SignalFeedPayload | null> {
-    const reader = this.bee.feed.makeReader(this.topic, new EthAddress(peerAddress))
+  async read(peer: SignalPeer): Promise<SignalFeedPayload | null> {
+    const topic = signalTopic(this.docFeedId, peer.sessionId)
+    const key = `${peer.identity}:${peer.sessionId}`
     const { latest, next } = await drainFeed(
-      index => this.readIndex(reader, index),
-      this.peerNextIndexes.get(peerAddress) ?? 0n,
-      peerAddress,
+      index => this.readIndex(topic, peer.identity, index),
+      this.peerNextIndexes.get(key) ?? 0n,
+      key,
       this.probe,
-      `${TAG} read(${peerAddress.slice(0, 8)}…)`,
+      `${TAG} read(${peer.address.slice(0, 8)}…)`,
     )
 
-    this.peerNextIndexes.set(peerAddress, next)
+    this.peerNextIndexes.set(key, next)
 
     return latest
   }
 
-  private async readIndex(reader: FeedReader, index: bigint): Promise<FeedRead<SignalFeedPayload>> {
-    try {
-      const result = await reader.downloadPayload({ index: FeedIndex.fromBigInt(index) })
-
-      return { status: 'ok', payload: JSON.parse(result.payload.toUtf8()) as SignalFeedPayload }
-    } catch (err) {
-      return isNotFoundError(err) ? { status: 'absent' } : { status: 'failed', error: err }
-    }
+  private async readIndex(topic: Topic, owner: string, index: bigint): Promise<FeedRead<SignalFeedPayload>> {
+    return decode(await this.storage.readFeed(topic, owner, index))
   }
 
   // eslint-disable-next-line require-await
@@ -110,11 +115,9 @@ export class SwarmSignal implements ISwarmSignal {
   }
 
   private async readOwn(): Promise<SignalFeedPayload> {
-    const reader = this.bee.feed.makeReader(this.topic, this.ownAddress)
-
     // We are the only writer, so the tail is found once and then tracked in memory.
     if (!this.ownIndexResolved) {
-      this.currentIndex = await this.resolveOwnTail(reader)
+      this.currentIndex = await this.resolveOwnTail()
       this.ownIndexResolved = true
       this.logger.debug(`${TAG} own feed tail resolved at index ${this.currentIndex}`)
     }
@@ -123,14 +126,14 @@ export class SwarmSignal implements ISwarmSignal {
       return { records: [] }
     }
 
-    const result = await this.readIndex(reader, this.currentIndex)
+    const result = await this.readIndex(this.ownTopic, this.storage.owner, this.currentIndex)
 
     return result.status === 'ok' ? result.payload : { records: [] }
   }
 
   // An empty head lookup is trusted: confirming it would probe index 0, which our first record is about to use.
-  private async resolveOwnTail(reader: FeedReader): Promise<bigint> {
-    const head = await this.latestIndex(reader)
+  private async resolveOwnTail(): Promise<bigint> {
+    const head = await this.storage.feedHead(this.ownTopic, this.storage.owner)
 
     if (head === null) {
       return -1n
@@ -138,36 +141,19 @@ export class SwarmSignal implements ISwarmSignal {
 
     return await resolveFeedTail(
       () => Promise.resolve(head),
-      index => this.readIndex(reader, index),
+      index => this.readIndex(this.ownTopic, this.storage.owner, index),
       TAG,
     )
   }
 
-  // Bee's head lookup; `null` on a miss or error, and the forward walk takes over.
-  private async latestIndex(reader: FeedReader): Promise<bigint | null> {
-    try {
-      return (await reader.downloadPayload()).feedIndex.toBigInt()
-    } catch (err) {
-      if (!isNotFoundError(err)) {
-        this.logger.debug(`${TAG} feed head lookup failed, walking from 0 instead: ${String(err)}`)
-      }
-
-      return null
-    }
-  }
-
   private async writePayload(payload: SignalFeedPayload): Promise<void> {
     const nextIndex = this.currentIndex + 1n
-    const writer = this.bee.feed.makeWriter(this.topic, this.ownSigner)
 
     // Claimed before the upload and kept on failure: a failed write may still have stored its chunk.
     this.currentIndex = nextIndex
 
     try {
-      await writer.uploadPayload(this.stamp, JSON.stringify(payload), {
-        index: FeedIndex.fromBigInt(nextIndex),
-        deferred: DEFERRED_FEED_UPLOAD,
-      })
+      await this.storage.writeFeed(this.ownTopic, nextIndex, new TextEncoder().encode(JSON.stringify(payload)))
       this.logger.debug(`${TAG} writePayload ✓ index: ${nextIndex}`)
     } catch (err) {
       this.errorHandler.handleError(err, `${TAG}.writePayload(index ${nextIndex})`)

@@ -5,6 +5,7 @@ import { EventEmitter } from '../utils/eventEmitter'
 
 import { IMembers, MemberEntry } from './members'
 import type { CursorPosition, NotificationHandler, NotificationPayload } from './notification'
+import type { SwarmStorage } from './storage'
 
 /** Collaborative Yjs document: full snapshots on each session's Swarm feed, deltas to online peers. */
 export interface ISwarmDoc {
@@ -70,12 +71,12 @@ export interface DocTransportDeps {
   rendezvous: string
   /** Room-derived secret for encrypting signaling traffic. It must never leave the client. */
   transportSecret: string
-  /** Bee node HTTP API URL. */
+  /** Where feeds are read and written; it owns every feed this session writes, signal feeds included. */
+  storage: SwarmStorage
+  /** Bee node HTTP API URL when the app gave one, for transports that need the node itself; otherwise empty. */
   beeApiUrl: string
-  /** Session key that signs this session's feed writes. */
+  /** Session key that signs this session's deltas. Feed writes are signed by `storage`. */
   signer: PrivateKey
-  /** Postage batch ID for snapshot and signal writes. */
-  stampId: string
 }
 
 /** Called once in the `SwarmDoc` constructor with resolved dependencies. Returns the transport instance. */
