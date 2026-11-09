@@ -72,7 +72,7 @@ export class Members implements IMembers {
   private directoryNextRead: bigint = 0n
   private lastDirectoryWriteAt = 0
 
-  /** This identity's own sessions — the only announce entries this node ever writes. */
+  /** This session's own entries; the announce feed also repeats this identity's other sessions from the roster. */
   private readonly ownSessions: Map<string, MemberEntry> = new Map()
   /** Sessions learnt from other identities' announce feeds. */
   private readonly roster: Map<string, MemberEntry> = new Map()
@@ -149,14 +149,11 @@ export class Members implements IMembers {
 
     const queue = Array.from(this.knownIdentities)
 
+    // Our own identity too: its other sessions (other tabs, earlier visits) are members whose feeds hold our work.
     for (let i = 0; i < queue.length && i < MAX_CRAWL_IDENTITIES; i++) {
-      const identity = queue[i]
+      const payload = await this.readAnnounce(queue[i])
 
-      if (identity !== this.identity) {
-        const payload = await this.readAnnounce(identity)
-
-        if (payload) this.mergeAnnounce(payload, queue)
-      }
+      if (payload) this.mergeAnnounce(payload, queue)
     }
 
     await this.listUnlistedIdentities()
@@ -191,6 +188,11 @@ export class Members implements IMembers {
     } catch (err) {
       this.logger.debug(`${TAG} retire: ${normalizedAddress.slice(0, 8)}… failed — ${(err as Error).message}`)
     }
+  }
+
+  // Sessions of this identity that are not this session's own: other tabs, and earlier visits.
+  private ownIdentitySessions(): Map<string, MemberEntry> {
+    return new Map([...this.roster].filter(([, entry]) => entry.identity === this.identity))
   }
 
   private merged(): Map<string, MemberEntry> {
@@ -375,12 +377,18 @@ export class Members implements IMembers {
       return
     }
 
+    // Only the newest announce entry counts, so it must carry this identity's earlier sessions as well, or a later
+    // reader would never learn of them and never read what they wrote.
+    const own = await this.readAnnounce(this.identity)
+
+    if (own) this.mergeAnnounce(own, [])
+
     for (let attempt = 1; attempt <= MAX_WRITE_RETRIES; attempt++) {
       const wanted = Array.from(this.ownSessions.keys())
       const payload: AnnouncePayload = {
         v: API_VERSION,
         identity: this.identity,
-        sessions: Object.fromEntries(this.ownSessions),
+        sessions: { ...Object.fromEntries(this.ownIdentitySessions()), ...Object.fromEntries(this.ownSessions) },
         known: Array.from(this.knownIdentities),
       }
 
